@@ -1,8 +1,86 @@
+"""
+========================================================================================
+AI TRAVEL PLANNER - MULTI-AGENT BACKEND PIPELINE
+========================================================================================
+
+Architecture Overview:
+----------------------
+This module implements an enterprise-grade multi-agent travel concierge application
+using a hybrid AI architecture:
+
+1. System One Decision Model (TypeSafe Jev):
+   - Fast, calibrated probabilistic decision engine (System 1 "thinking fast").
+   - Replaces traditional, brittle LLM "prompt-and-parse" JSON loops.
+   - Evaluates input guardrails (Noul), dynamic multi-agent specialist routing
+     (parallel Nouls), travel style classification (Choice), and budget feasibility
+     scoring (Score) in milliseconds with typed guarantees.
+
+2. System Two Generative Model (Groq LLM):
+   - High-throughput reasoning and prose generation (System 2 "thinking slow").
+   - Synthesizes specialist findings into rich, structured day-by-day itineraries,
+     flight logistics advice, accommodation summaries, and comprehensive travel guides.
+
+3. Model Context Protocol (MCP v2) Specialist Tools:
+   - Aviation Tool: Global airport and airline routing databases.
+   - Search Tool (Tavily): Live web intelligence for hotels, resorts, and boutique stays.
+   - Weather Tool (Open-Meteo): Live current conditions and 7-day extended forecasts.
+
+4. LangGraph StateGraph & Persistence Checkpointing:
+   - Orchestrates multi-agent state flow with dynamic conditional branching.
+   - Human-in-the-Loop (HITL) pause/resume capability using `interrupt()` and `Command(resume=...)`.
+   - PostgreSQL (PostgresSaver) persistence with automatic fallback to InMemorySaver.
+
+========================================================================================
+WHAT IS TYPESAFE JEV DOING IN THIS BACKEND? (DEEP DIVE)
+========================================================================================
+Traditional LLM multi-agent systems use an LLM prompt like:
+    "Respond in JSON with fields {is_travel: bool, needs_flights: bool...}"
+Problems with that traditional approach:
+    1. High latency (1-3 seconds per classification).
+    2. Expensive token consumption.
+    3. Brittle output (LLMs frequently hallucinate invalid JSON or uncalibrated confidence).
+    4. Rate limiting / TPM throttling during peak loads.
+
+How TypeSafe Jev Solves This:
+TypeSafe Jev is a System One decision model trained specifically to produce typed,
+calibrated probability judgments without prompt parsing.
+
+In this pipeline, Jev is used in two key agents:
+
+A. SUPERVISOR AGENT (Input Guardrail & Dynamic Routing):
+   - Noul("is_travel"): Calibrated probability [0.0 - 1.0] indicating whether the prompt
+     is actually about travel. If < 0.35, the request is immediately rejected at the
+     guardrail without wasting expensive LLM tokens.
+   - Parallel Nouls ("needs_flights", "needs_hotels", "needs_weather", "needs_budget"):
+     Assesses in parallel which specialist agents are genuinely needed for the user's
+     specific query. For example, if a user asks "Suggest hotels in Tokyo", Jev assigns
+     high probability to `needs_hotels` and low probability to `needs_flights`, skipping
+     unnecessary agent steps dynamically.
+   - Choice("trip_style"): Classifies the travel category into mutually exclusive options:
+     ['budget', 'cultural', 'luxury', 'family', 'adventure', 'general'].
+   - Score("destination_clarity"): Probability-weighted expected level (0 to 2) on how
+     clearly the user specified their destination.
+
+B. BUDGET AGENT (Financial Intelligence & Risk Assessment):
+   - Score("feasibility"): Probability-weighted expected score on a 3-level rubric
+     (0: Tight budget risk -> 1: Feasible mid-range -> 2: Generous budget).
+   - Choice("pricing_tier"): Classifies budget into ['budget', 'moderate', 'luxury'].
+   - Noul("peak_risk"): Evaluates the binary risk of unexpected expenses or peak season
+     surge pricing.
+========================================================================================
+"""
+
 import os
 import certifi
 from dotenv import load_dotenv
 
+# --------------------------------------------------------------------------------------
+# 1. Environment & SSL Certificate Configuration
+# --------------------------------------------------------------------------------------
+# Load environment variables from .env file (API keys, database URLs, model configs)
 load_dotenv()
+
+# Configure certifi CA certificates for secure HTTPS API calls across tools & SDKs
 os.environ["SSL_CERT_FILE"] = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
@@ -14,6 +92,7 @@ import json
 import psycopg
 from psycopg.rows import dict_row
 
+# LangGraph & LangChain Core Imports
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.checkpoint.memory import InMemorySaver
@@ -26,9 +105,17 @@ from langchain_core.messages import (
 )
 from langchain_groq import ChatGroq
 
+# --------------------------------------------------------------------------------------
 # TypeSafe Jev System One SDK
+# --------------------------------------------------------------------------------------
+# Jev primitives:
+# - Noul: Evaluates a binary proposition, returning a calibrated probability (float 0.0 to 1.0).
+# - Choice: Selects from a set of mutually exclusive categorical options with probability distribution.
+# - Score: Computes an expected value score over an ordered rubric of criteria.
 from typesafe_sdk import TypeSafeClient, Noul, Choice, Score
 
+# Model Context Protocol (MCP) Tool Wrappers
+# Interfaces to live external APIs (AviationStack, Tavily Search, Open-Meteo Weather)
 from mcp_client import (
     tavily_mcp_search,
     aviation_mcp_call,
@@ -38,15 +125,29 @@ from mcp_client import (
 )
 
 
+# --------------------------------------------------------------------------------------
+# 2. Database Connection Sanitization
+# --------------------------------------------------------------------------------------
 def get_database_url() -> Optional[str]:
-    """Retrieve and sanitize PostgreSQL connection string with graceful fallback."""
+    """
+    Retrieve and sanitize PostgreSQL connection string with graceful fallback.
+    
+    Checks if DATABASE_URL is set in environment and ensures compatibility with psycopg3:
+    - Normalizes driver prefix 'postgresql+psycopg://' to standard 'postgresql://'.
+    - Automatically appends 'sslmode=require' for remote cloud databases (Neon, Render, Supabase).
+    
+    Returns:
+        Sanitized PostgreSQL URL string, or None if unconfigured or placeholder.
+    """
     database_url = os.getenv("DATABASE_URL")
     if not database_url or "user:password" in database_url:
         return None
 
+    # Standardize psycopg3 connection scheme
     if database_url.startswith("postgresql+psycopg://"):
         database_url = database_url.replace("postgresql+psycopg://", "postgresql://", 1)
 
+    # Require SSL for cloud PostgreSQL instances (e.g. Neon / Render)
     if "sslmode=" not in database_url and "localhost" not in database_url and "127.0.0.1" not in database_url:
         separator = "&" if "?" in database_url else "?"
         database_url = f"{database_url}{separator}sslmode=require"
@@ -54,65 +155,91 @@ def get_database_url() -> Optional[str]:
     return database_url
 
 
+# --------------------------------------------------------------------------------------
+# 3. Model Initializations (Groq Generative LLM & TypeSafe Jev System One)
+# --------------------------------------------------------------------------------------
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
     raise ValueError("GROQ_API_KEY is missing. Please add it to your .env file.")
 
+# Groq model selection (fast inference with high token throughput)
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 
-# =========================
-# LLM Initialization
-# =========================
+# System Two Generative Model
 llm = ChatGroq(
     model=GROQ_MODEL,
     api_key=GROQ_API_KEY,
     temperature=0.3,
 )
 
-# =========================
-# TypeSafe Jev System One Client
-# =========================
+# System One Decision Model: TypeSafe Jev
+# Used for sub-second calibrated judgments (guardrails, routing, classification, scoring)
 TYPESAFE_API_KEY = os.getenv("TYPESAFE_API_KEY")
 jev_client: Optional[TypeSafeClient] = (
     TypeSafeClient(api_key=TYPESAFE_API_KEY) if TYPESAFE_API_KEY else None
 )
 
 
-# =========================
-# State Schema
-# =========================
+# --------------------------------------------------------------------------------------
+# 4. State Schema Definition (LangGraph State)
+# --------------------------------------------------------------------------------------
 class TravelState(TypedDict, total=False):
+    """
+    Shared state schema passed across all nodes in the StateGraph.
+    
+    Fields:
+        messages: Conversation history accumulated using operator.add.
+        user_query: The raw user travel request string.
+        
+        guardrail_allowed: Boolean decision from TypeSafe Jev (True = allowed, False = blocked).
+        guardrail_reason: Explanation if the guardrail rejected an off-topic request.
+        selected_agents: Dynamic list of specialist agents chosen by Jev based on user needs.
+        trip_constraints: Structured parameters (destination, style, budget tier, origin).
+        supervisor_reasoning: Formatted audit trail of routing decisions.
+        
+        flight_results: Structured findings from Flight Specialist (airports, airlines, fares).
+        hotel_results: Live search results from Hotel Specialist (neighborhoods, top stays).
+        weather_results: Current conditions and forecasts from Weather Specialist.
+        budget_results: Jev feasibility scores and detailed financial breakdown.
+        itinerary: Day-by-day travel plan draft synthesized by Itinerary Specialist.
+        
+        approval_request: Prompt presented to the user during human review (HITL).
+        approved: User approval status (True = confirmed, False = revision requested).
+        human_feedback: User revision feedback if changes are requested.
+        final_response: Complete polished travel guide produced by Final Concierge.
+        
+        raw_data: Dictionary copy of state without message objects for API serialization.
+        llm_calls: Counter tracking the total number of generative LLM calls made.
+    """
     messages: Annotated[list[AnyMessage], operator.add]
     user_query: str
 
-    # Supervisor + guardrail state (powered by Jev)
+    # Supervisor & Guardrail state (powered by Jev System One)
     guardrail_allowed: bool
     guardrail_reason: str
     selected_agents: list[str]
     trip_constraints: dict[str, Any]
     supervisor_reasoning: str
 
-    # Specialist results
+    # Specialist outputs
     flight_results: str
     hotel_results: str
     weather_results: str
     budget_results: str
     itinerary: str
 
-    # HITL state
+    # Human-in-the-loop (HITL) review fields
     approval_request: str
     approved: bool
     human_feedback: str
     final_response: str
 
-    # Metadata
+    # Execution telemetry
     raw_data: dict[str, Any]
     llm_calls: int
 
 
-# =========================
-# Shared Configuration
-# =========================
+# Known specialist agent registry
 KNOWN_AGENTS = {
     "flight_agent",
     "hotel_agent",
@@ -121,6 +248,7 @@ KNOWN_AGENTS = {
     "itinerary_agent",
 }
 
+# Standard sequential pipeline order when full execution is required
 AGENT_ORDER = [
     "flight_agent",
     "hotel_agent",
@@ -130,17 +258,8 @@ AGENT_ORDER = [
 ]
 
 
-def _llm_text(system_prompt: str, user_prompt: str) -> str:
-    response = llm.invoke(
-        [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt),
-        ]
-    )
-    return str(response.content)
-
-
 def _empty_constraints() -> dict[str, Any]:
+    """Helper returning default empty trip constraint dictionary."""
     return {
         "destination": "",
         "origin": "",
@@ -151,23 +270,48 @@ def _empty_constraints() -> dict[str, Any]:
     }
 
 
-# =========================
-# Supervisor Agent + Input Guardrail (TypeSafe Jev)
-# =========================
-def supervisor_agent(state: TravelState):
+# --------------------------------------------------------------------------------------
+# 5. Supervisor Agent & Input Guardrail (Powered by TypeSafe Jev)
+# --------------------------------------------------------------------------------------
+def supervisor_agent(state: TravelState) -> Dict[str, Any]:
+    """
+    Supervisor Node:
+    ----------------
+    Acts as the entrypoint router, safety guardrail, and planning coordinator.
+    
+    FLOW OF EXECUTION:
+    1. Reads `user_query` from the current TravelState.
+    2. Sends a single parallel request to TypeSafe Jev System One containing:
+       - Input Guardrail (Noul): Is this query about travel?
+       - Routing Questions (4 Nouls): Does the query need flights, hotels, weather, budget?
+       - Travel Style (Choice): Classify trip intent ('budget', 'cultural', 'luxury', etc.).
+       - Destination Clarity (Score): Rate destination specificity on a 0-2 rubric.
+    3. Evaluates Guardrail:
+       - If `is_travel` probability < 0.35: Immediately route to `guardrail_blocked` node.
+       - If >= 0.35: Proceed with dynamically selected specialist agents.
+    4. Evaluates Specialist Activation:
+       - Checks each Jev probability threshold (flight >= 0.20, hotel >= 0.30, etc.).
+       - Only activates agents relevant to the user's specific request.
+       - Always includes `itinerary_agent` to synthesize final outputs.
+    5. Returns updated state with selected agents and structured trip constraints.
+    """
     query = state["user_query"]
     llm_calls = state.get("llm_calls", 0)
 
-    # 1. Evaluate with TypeSafe Jev System One if available
+    # Check if TypeSafe Jev client is initialized with a valid API key
     if jev_client:
         try:
             print("[INFO] Invoking TypeSafe Jev for typed supervisor guardrail and routing...")
+            
+            # Execute all routing, guardrail, and categorization questions in ONE parallel Jev System One call
             jev_res = jev_client.system_one(
                 state={"user_query": query},
                 questions={
+                    # Binary Guardrail: Is this a travel-related query?
                     "is_travel": Noul(
                         instructions="Is this user request related to travel, vacation, flights, hotels, weather, itineraries, destinations, sightseeing, or trip planning?"
                     ),
+                    # Specialist activation decisions (parallel probabilities)
                     "needs_flights": Noul(
                         instructions="Does this trip request benefit from flight recommendations, airport routing, or airline options?"
                     ),
@@ -180,6 +324,7 @@ def supervisor_agent(state: TravelState):
                     "needs_budget": Noul(
                         instructions="Does this trip request specifically ask for budget analysis, cost estimation, price breakdown, or financial feasibility?"
                     ),
+                    # Discrete travel style categorization
                     "trip_style": Choice(
                         instructions="What is the primary travel style or purpose?",
                         criteria={
@@ -191,6 +336,7 @@ def supervisor_agent(state: TravelState):
                             "general": "General leisure vacation or sightseeing"
                         }
                     ),
+                    # Graded destination clarity evaluation
                     "destination_clarity": Score(
                         instructions="How clear and specific is the travel destination in this request?",
                         criteria=[
@@ -202,6 +348,7 @@ def supervisor_agent(state: TravelState):
                 }
             )
 
+            # Extract calibrated answers from TypeSafe Jev response
             is_travel_prob = float(jev_res.nouls["is_travel"].noul)
             flight_prob = float(jev_res.nouls["needs_flights"].noul)
             hotel_prob = float(jev_res.nouls["needs_hotels"].noul)
@@ -216,7 +363,8 @@ def supervisor_agent(state: TravelState):
                 f"weather={weather_prob:.2f}, budget={budget_prob:.2f}, style='{trip_style}'"
             )
 
-            # Guardrail check
+            # --- STEP 1: Guardrail Enforcement ---
+            # If the user asks something off-topic (e.g. "Write Python code for quicksort"), Jev flags it here
             if is_travel_prob < 0.35:
                 reason = "TripMate AI can only help with travel-planning requests (flights, hotels, weather, destinations, budgets, or itineraries)."
                 return {
@@ -230,7 +378,8 @@ def supervisor_agent(state: TravelState):
                     "llm_calls": llm_calls,
                 }
 
-            # Select specialist agents dynamically based on calibrated probabilities
+            # --- STEP 2: Dynamic Agent Selection based on Jev Probabilities ---
+            # Select only the specialist agents that add value to this specific request
             selected_agents = []
             if flight_prob >= 0.20 or any(w in query.lower() for w in ["flight", "fly", "airport", "airline"]):
                 selected_agents.append("flight_agent")
@@ -241,7 +390,7 @@ def supervisor_agent(state: TravelState):
             if budget_prob >= 0.35 or any(w in query.lower() for w in ["budget", "cheap", "cost", "price", "affordable", "expensive", "$"]):
                 selected_agents.append("budget_agent")
 
-            # Always include itinerary agent to integrate findings
+            # Always include the Itinerary Agent to synthesize all specialist outputs
             if "itinerary_agent" not in selected_agents:
                 selected_agents.append("itinerary_agent")
 
@@ -274,7 +423,7 @@ def supervisor_agent(state: TravelState):
         except Exception as exc:
             print(f"[WARN] TypeSafe Jev evaluation notice ({exc}). Falling back to standard pipeline...")
 
-    # Fallback if Jev is not configured or temporary error
+    # --- Resilient Fallback Pipeline (if Jev offline or unconfigured) ---
     selected_agents = AGENT_ORDER.copy()
     destination = extract_destination(query)
     constraints = {
@@ -296,10 +445,22 @@ def supervisor_agent(state: TravelState):
     }
 
 
-# =========================
-# Guardrail Blocked Handler
-# =========================
-def guardrail_blocked_agent(state: TravelState):
+# --------------------------------------------------------------------------------------
+# 6. Guardrail Blocked Handler
+# --------------------------------------------------------------------------------------
+def guardrail_blocked_agent(state: TravelState) -> Dict[str, Any]:
+    """
+    Terminal Node for Blocked Requests:
+    -----------------------------------
+    Invoked when TypeSafe Jev determines that the user query is not a travel-related
+    request (e.g., general coding help, random chit-chat, math homework).
+    
+    FLOW:
+    1. Reads the polite refusal explanation from state.
+    2. Packages it into `final_response` and appends an AIMessage to message history.
+    3. The graph routes directly to END, terminating execution safely without incurring
+       generative LLM costs or hitting specialist external tools.
+    """
     reason = state.get("final_response") or state.get("guardrail_reason") or (
         "This request was blocked by the travel input guardrail."
     )
@@ -309,9 +470,9 @@ def guardrail_blocked_agent(state: TravelState):
     }
 
 
-# =========================
-# Flight Agent
-# =========================
+# --------------------------------------------------------------------------------------
+# 7. Specialist Agent: Flight Agent (Aviation MCP Tool + Groq LLM)
+# --------------------------------------------------------------------------------------
 FLIGHT_AGENT_PROMPT = """
 You are an expert travel flight planner.
 
@@ -325,7 +486,7 @@ Available Airline Data:
 {airline_data}
 
 Please generate:
-1. Recommended Departure and Arrival Airports
+1. Recommended Departure and Arrival Airports (with IATA codes)
 2. Primary Airlines serving this route
 3. Estimated flight duration and typical layover scenarios
 4. Estimated economy and business class airfare ranges
@@ -335,9 +496,22 @@ Please generate:
 Provide concise, structured, and highly practical flight advice.
 """
 
-def flight_agent(state: TravelState):
+def flight_agent(state: TravelState) -> Dict[str, Any]:
+    """
+    Flight Specialist Node:
+    -----------------------
+    Gathers airport data and airline routes to advise the traveler on flights.
+    
+    FLOW:
+    1. Calls Model Context Protocol (MCP) tool `aviation_mcp_call("list_airports")`
+       and `aviation_mcp_call("list_airlines")` to retrieve grounded airport codes and hubs.
+    2. Constructs a prompt combining the user query and retrieved aviation data.
+    3. Invokes ChatGroq LLM to draft comprehensive flight logistics and pricing advice.
+    4. Writes `flight_results` into state and increments `llm_calls`.
+    """
     query = state["user_query"]
     try:
+        # Call Aviation MCP tool asynchronously
         airports = asyncio.run(aviation_mcp_call("list_airports"))
         airlines = asyncio.run(aviation_mcp_call("list_airlines"))
 
@@ -355,6 +529,7 @@ def flight_agent(state: TravelState):
         )
         flight_data = response.content
     except Exception as exc:
+        # Graceful fallback in case of network or tool timeout
         flight_data = f"Flight information compiled with estimated routing. (Notice: {exc})"
 
     return {
@@ -364,10 +539,20 @@ def flight_agent(state: TravelState):
     }
 
 
-# =========================
-# Hotel Agent
-# =========================
-def hotel_agent(state: TravelState):
+# --------------------------------------------------------------------------------------
+# 8. Specialist Agent: Hotel Agent (Tavily Web Search MCP Tool)
+# --------------------------------------------------------------------------------------
+def hotel_agent(state: TravelState) -> Dict[str, Any]:
+    """
+    Hotel Specialist Node:
+    ----------------------
+    Discovers accommodations using live real-time web intelligence.
+    
+    FLOW:
+    1. Constructs a targeted search query for top-rated hotels, boutique stays, and neighborhoods.
+    2. Calls Tavily MCP Search tool (`tavily_mcp_search`) to retrieve live, current lodging options.
+    3. Stores live hotel suggestions into `hotel_results` in the shared TravelState.
+    """
     query = f"Best hotels and places to stay for {state['user_query']}"
     try:
         hotel_results = asyncio.run(tavily_mcp_search(query))
@@ -381,10 +566,21 @@ def hotel_agent(state: TravelState):
     }
 
 
-# =========================
-# Weather Agent
-# =========================
-def weather_agent(state: TravelState):
+# --------------------------------------------------------------------------------------
+# 9. Specialist Agent: Weather Agent (Open-Meteo Weather MCP Tool)
+# --------------------------------------------------------------------------------------
+def weather_agent(state: TravelState) -> Dict[str, Any]:
+    """
+    Weather Specialist Node:
+    ------------------------
+    Fetches real-time weather and 7-day meteorological forecasts to enable weather-adaptive plans.
+    
+    FLOW:
+    1. Extracts the destination city name from the user query.
+    2. Calls Open-Meteo Weather MCP tool for current temperature, precipitation, and conditions.
+    3. Calls Open-Meteo 7-day forecast MCP tool to get extended forecast data.
+    4. Combines the reports into `weather_results` for the Itinerary and Final agents.
+    """
     city = extract_destination(state["user_query"])
     try:
         weather_data = asyncio.run(weather_mcp_search(city))
@@ -399,15 +595,34 @@ def weather_agent(state: TravelState):
     }
 
 
-# =========================
-# Budget Agent (TypeSafe Jev + LLM)
-# =========================
-def budget_agent(state: TravelState):
+# --------------------------------------------------------------------------------------
+# 10. Specialist Agent: Budget Agent (TypeSafe Jev System One + Groq LLM)
+# --------------------------------------------------------------------------------------
+def budget_agent(state: TravelState) -> Dict[str, Any]:
+    """
+    Budget Specialist Node:
+    -----------------------
+    Combines TypeSafe Jev's calibrated mathematical models with Groq's generative prose.
+    
+    WHAT TYPESAFE JEV IS DOING HERE:
+    1. `Score("feasibility")`:
+       - Rates budget feasibility on a 3-tier ordered rubric [0, 1, 2]
+         (0 = tight overrun risk, 1 = feasible mid-range, 2 = generous spending buffer).
+       - Jev returns an expected value score (e.g. 1.74 / 2.00) based on calibrated probabilities.
+    2. `Choice("pricing_tier")`:
+       - Classifies the expected daily spending tier: 'budget' ($50-$100/day),
+         'moderate' ($100-$250/day), or 'luxury' ($250+/day).
+    3. `Noul("peak_risk")`:
+       - Calculates binary probability [0.0 - 1.0] of unexpected expenses or peak season surge pricing.
+       
+    The Groq LLM then generates an itemized daily cost breakdown, money-saving tips, and financial
+    safety warnings, enriched by Jev's quantitative evaluation.
+    """
     query = state["user_query"]
     constraints = state.get("trip_constraints", {})
     style = constraints.get("travel_style", "general")
 
-    # 1. Use TypeSafe Jev for calibrated budget scoring if available
+    # 1. TypeSafe Jev Calibrated Budget Assessment
     jev_budget_summary = ""
     if jev_client:
         try:
@@ -417,6 +632,7 @@ def budget_agent(state: TravelState):
                     "travel_style": style,
                 },
                 questions={
+                    # Expected value score on budget feasibility
                     "feasibility": Score(
                         instructions="Rate the budget feasibility of this trip against typical travel costs.",
                         criteria=[
@@ -425,6 +641,7 @@ def budget_agent(state: TravelState):
                             "Comfortable budget / generous spending room"
                         ]
                     ),
+                    # Categorical pricing tier
                     "pricing_tier": Choice(
                         instructions="What is the expected budget tier?",
                         criteria={
@@ -433,6 +650,7 @@ def budget_agent(state: TravelState):
                             "luxury": "Luxury ($250+/day)"
                         }
                     ),
+                    # Binary risk of unexpected price spikes
                     "peak_risk": Noul(
                         instructions="Is there significant risk of unexpected expenses or peak season price surges?"
                     )
@@ -452,6 +670,7 @@ def budget_agent(state: TravelState):
         except Exception as e:
             print(f"[DEBUG] Notice on Jev budget evaluation: {e}")
 
+    # 2. Generative Detailed Cost Breakdown via Groq LLM
     prompt = f"""
 Analyze the travel budget and cost breakdown for this trip.
 
@@ -483,9 +702,9 @@ Provide:
     }
 
 
-# =========================
-# Itinerary Agent
-# =========================
+# --------------------------------------------------------------------------------------
+# 11. Itinerary Specialist Agent
+# --------------------------------------------------------------------------------------
 ITINERARY_PROMPT = """
 Create a comprehensive, day-by-day travel itinerary.
 
@@ -502,7 +721,19 @@ Requirements:
 - Keep the plan practical, logical, and budget-conscious.
 """
 
-def itinerary_agent(state: TravelState):
+def itinerary_agent(state: TravelState) -> Dict[str, Any]:
+    """
+    Itinerary Specialist Node:
+    --------------------------
+    Synthesizes the findings of all upstream specialists (Flights, Hotels, Weather, Budget)
+    into a coherent, realistic day-by-day schedule.
+    
+    FLOW:
+    1. Gathers accumulated specialist findings from state.
+    2. Prompts Groq LLM to generate a draft day-by-day travel itinerary.
+    3. Prepares an approval request string for human review.
+    4. Saves draft into `itinerary` and `approval_request` fields in state.
+    """
     prompt = ITINERARY_PROMPT.format(
         user_query=state["user_query"],
         flight_results=state.get("flight_results", "")[:800],
@@ -531,10 +762,23 @@ def itinerary_agent(state: TravelState):
     }
 
 
-# =========================
-# Human Approval Step (HITL)
-# =========================
-def human_approval_agent(state: TravelState):
+# --------------------------------------------------------------------------------------
+# 12. Human-in-the-Loop (HITL) Review Step
+# --------------------------------------------------------------------------------------
+def human_approval_agent(state: TravelState) -> Dict[str, Any]:
+    """
+    Human-in-the-Loop (HITL) Node:
+    ------------------------------
+    Pauses graph execution using LangGraph's native `interrupt()` function.
+    
+    HOW HITL WORKS:
+    1. When `interrupt()` is called, LangGraph saves the current thread state to PostgreSQL / Memory
+       and halts execution immediately.
+    2. The API returns the draft itinerary and `requires_approval: true` to the client.
+    3. When the user approves or submits feedback, the client calls `POST /api/plans/{thread_id}/resume`.
+    4. LangGraph resumes from this exact node using `Command(resume=...)`, populating `approved`
+       and `human_feedback` in state.
+    """
     review = interrupt(
         {
             "question": "Do you approve this itinerary?",
@@ -559,9 +803,9 @@ def human_approval_agent(state: TravelState):
     }
 
 
-# =========================
-# Final Concierge Agent
-# =========================
+# --------------------------------------------------------------------------------------
+# 13. Final Concierge Agent
+# --------------------------------------------------------------------------------------
 FINAL_PROMPT = """
 Generate the complete final travel proposal for the user based on multi-agent findings.
 
@@ -587,7 +831,13 @@ Format the response beautifully in clean Markdown with these sections:
 Ensure the response is detailed, professional, and directly useful for immediate trip planning.
 """
 
-def final_agent(state: TravelState):
+def final_agent(state: TravelState) -> Dict[str, Any]:
+    """
+    Final Concierge Node:
+    ---------------------
+    Produces the complete, publication-grade travel guide by synthesizing all specialist outputs,
+    weather adjustments, and any human feedback.
+    """
     prompt = FINAL_PROMPT.format(
         user_query=state["user_query"],
         flight_results=state.get("flight_results", ""),
@@ -612,9 +862,10 @@ def final_agent(state: TravelState):
     }
 
 
-# =========================
-# Dynamic Supervisor Routing
-# =========================
+# --------------------------------------------------------------------------------------
+# 14. Dynamic Conditional Routing Logic
+# --------------------------------------------------------------------------------------
+# Map of routing keys to graph node names
 ROUTE_MAP = {
     "guardrail_blocked": "guardrail_blocked",
     "flight_agent": "flight_agent",
@@ -626,11 +877,19 @@ ROUTE_MAP = {
 
 
 def _selected_agents(state: TravelState) -> list[str]:
+    """Helper returning an ordered list of specialist agents selected by TypeSafe Jev."""
     selected = state.get("selected_agents", [])
     return [agent for agent in AGENT_ORDER if agent in selected]
 
 
 def route_from_supervisor(state: TravelState) -> str:
+    """
+    Conditional Edge from Supervisor:
+    ---------------------------------
+    - If `guardrail_allowed` is False -> Routes immediately to `guardrail_blocked`.
+    - If True -> Routes to the first active specialist agent chosen by Jev.
+    - If no specialist was chosen -> Defaults directly to `itinerary_agent`.
+    """
     if not state.get("guardrail_allowed", True):
         return "guardrail_blocked"
 
@@ -639,6 +898,14 @@ def route_from_supervisor(state: TravelState) -> str:
 
 
 def route_after_agent(current_agent: str):
+    """
+    Conditional Edge Factory:
+    -------------------------
+    Creates a dynamic routing function for each specialist node.
+    After `current_agent` finishes, this inspects `selected_agents` and routes
+    to the next active specialist in the pipeline sequence.
+    When all active specialists have completed, it automatically routes to `itinerary_agent`.
+    """
     def route(state: TravelState) -> str:
         selected = _selected_agents(state)
         current_index = AGENT_ORDER.index(current_agent)
@@ -652,12 +919,34 @@ def route_after_agent(current_agent: str):
     return route
 
 
-# =========================
-# StateGraph Construction
-# =========================
+# --------------------------------------------------------------------------------------
+# 15. LangGraph StateGraph Construction
+# --------------------------------------------------------------------------------------
 def build_travel_graph() -> StateGraph:
+    """
+    Constructs and wires the full LangGraph StateGraph:
+    
+    Graph Topology:
+    [START] -> [supervisor] --(guardrail blocked)--> [guardrail_blocked] -> [END]
+                     |
+            (dynamic specialist routing via Jev)
+                     v
+             [flight_agent] -> [hotel_agent] -> [weather_agent] -> [budget_agent]
+                     |               |                 |                 |
+                     +---------------+-----------------+-----------------+
+                                             |
+                                             v
+                                     [itinerary_agent]
+                                             |
+                                             v
+                                      [final_agent]
+                                             |
+                                             v
+                                           [END]
+    """
     builder = StateGraph(TravelState)
 
+    # Register all processing nodes
     builder.add_node("supervisor", supervisor_agent)
     builder.add_node("guardrail_blocked", guardrail_blocked_agent)
     builder.add_node("flight_agent", flight_agent)
@@ -668,14 +957,19 @@ def build_travel_graph() -> StateGraph:
     builder.add_node("human_approval", human_approval_agent)
     builder.add_node("final_agent", final_agent)
 
+    # 1. Entry Edge: Graph begins at supervisor
     builder.add_edge(START, "supervisor")
+    
+    # 2. Supervisor Conditional Edge: Routes to first specialist or guardrail block
     builder.add_conditional_edges("supervisor", route_from_supervisor, ROUTE_MAP)
 
+    # 3. Dynamic Specialist Pipeline Edges (skip inactive specialists on the fly)
     builder.add_conditional_edges("flight_agent", route_after_agent("flight_agent"), ROUTE_MAP)
     builder.add_conditional_edges("hotel_agent", route_after_agent("hotel_agent"), ROUTE_MAP)
     builder.add_conditional_edges("weather_agent", route_after_agent("weather_agent"), ROUTE_MAP)
     builder.add_conditional_edges("budget_agent", route_after_agent("budget_agent"), ROUTE_MAP)
 
+    # 4. Terminal Synthesis Edges
     builder.add_edge("itinerary_agent", "final_agent")
     builder.add_edge("final_agent", END)
     builder.add_edge("guardrail_blocked", END)
@@ -683,9 +977,11 @@ def build_travel_graph() -> StateGraph:
     return builder
 
 
-# =========================
-# State Persistence Checkpointer
-# =========================
+# --------------------------------------------------------------------------------------
+# 16. State Persistence Checkpointer & Graph Compilation
+# --------------------------------------------------------------------------------------
+# Attempts to connect to PostgreSQL for persistent checkpointer state (for session recovery and HITL).
+# If PostgreSQL is offline or unconfigured, falls back cleanly to InMemorySaver.
 DATABASE_URL = get_database_url()
 
 if DATABASE_URL:
@@ -710,10 +1006,11 @@ else:
     print("[INFO] Using InMemorySaver for state persistence.")
 
 
-# =========================
-# Execution & Serialization Helpers
-# =========================
+# --------------------------------------------------------------------------------------
+# 17. Execution & Serialization Helpers
+# --------------------------------------------------------------------------------------
 def _interrupt_payload(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Helper to extract the interrupt payload from a LangGraph execution result."""
     interrupts = result.get("__interrupt__", [])
     if not interrupts:
         return None
@@ -724,6 +1021,10 @@ def _interrupt_payload(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def _serialize_result(result: Dict[str, Any], thread_id: str) -> Dict[str, Any]:
+    """
+    Serializes LangGraph internal state into a clean dictionary for FastAPI responses.
+    Extracts all specialist outputs, constraints, Jev reasoning, and approval flags.
+    """
     messages = result.get("messages", [])
     last_message = messages[-1].content if messages else ""
     final_response = result.get("final_response") or result.get("final_answer") or last_message
@@ -765,7 +1066,19 @@ def _serialize_result(result: Dict[str, Any], thread_id: str) -> Dict[str, Any]:
 
 
 def run_travel_agent(user_input: str, thread_id: Optional[str] = None) -> Dict[str, Any]:
-    """Execute travel planner pipeline and return comprehensive result."""
+    """
+    Primary API Entrypoint:
+    -----------------------
+    Executes a new travel planning request through the StateGraph.
+    
+    Args:
+        user_input: Raw travel query from user.
+        thread_id: Optional thread ID (auto-generated if None).
+        
+    Returns:
+        Complete serialized dictionary containing all specialist findings, Jev decisions,
+        and final formatted proposal.
+    """
     if not thread_id:
         thread_id = f"trip_{uuid.uuid4().hex[:12]}"
 
@@ -808,7 +1121,19 @@ def resume_travel_agent(
     approved: bool,
     feedback: str = "",
 ) -> Dict[str, Any]:
-    """Resume the paused LangGraph thread after human review."""
+    """
+    Human-in-the-Loop Resume Entrypoint:
+    ------------------------------------
+    Resumes a paused LangGraph thread following human review.
+    
+    Args:
+        thread_id: The thread ID of the paused execution.
+        approved: True if approved, False if revisions requested.
+        feedback: Human instructions for revision if approved=False.
+        
+    Returns:
+        Updated serialized dictionary containing the finalized response.
+    """
     if not thread_id:
         raise ValueError("thread_id is required to resume a travel plan.")
 
