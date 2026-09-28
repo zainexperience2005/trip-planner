@@ -47,10 +47,12 @@ export async function createTripPlan(
     ? `${query} (Origin airport: ${origin.trim().toUpperCase()})`
     : query;
 
+  const isJevActive = mode === "jev" || mode === "hybrid";
+
   const payload: Record<string, any> = {
     user_query: fullQuery,
     mode: mode,
-    use_jev: mode in ["jev", "hybrid"],
+    use_jev: isJevActive,
   };
   if (threadId) payload.thread_id = threadId;
 

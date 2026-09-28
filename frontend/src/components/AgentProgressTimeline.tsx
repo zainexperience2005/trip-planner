@@ -30,77 +30,86 @@ interface StepItem {
   agentKey?: string;
 }
 
-const STEPS: StepItem[] = [
-  {
-    id: "supervisor",
-    name: "Supervisor Guardrail & Routing",
-    tag: "TypeSafe Jev System 1",
-    type: "Decision Model",
-    icon: <Zap className="h-4 w-4 text-purple-400" />,
-    description: "Evaluates input safety (Noul), activates specialist agents, and extracts travel style.",
-  },
-  {
-    id: "flight_agent",
-    name: "Flight Specialist",
-    tag: "Aviation MCP Tool",
-    type: "Tool + LLM",
-    agentKey: "flight_agent",
-    icon: <Plane className="h-4 w-4 text-sky-400" />,
-    description: "Queries airport databases, hubs, and airlines to advise on routing & fares.",
-  },
-  {
-    id: "hotel_agent",
-    name: "Hotel Specialist",
-    tag: "Tavily Web Search MCP",
-    type: "Live Search",
-    agentKey: "hotel_agent",
-    icon: <Building2 className="h-4 w-4 text-amber-400" />,
-    description: "Searches live accommodation data, boutique stays, and neighborhood lodging.",
-  },
-  {
-    id: "weather_agent",
-    name: "Weather Specialist",
-    tag: "Open-Meteo MCP",
-    type: "Meteorological API",
-    agentKey: "weather_agent",
-    icon: <CloudSun className="h-4 w-4 text-emerald-400" />,
-    description: "Retrieves live current temperature and 7-day extended forecasts.",
-  },
-  {
-    id: "budget_agent",
-    name: "Budget & Risk Specialist",
-    tag: "TypeSafe Jev + Groq",
-    type: "Scoring & Analysis",
-    agentKey: "budget_agent",
-    icon: <DollarSign className="h-4 w-4 text-green-400" />,
-    description: "Calculates feasibility score (0-2), pricing tier, and peak price surge risk.",
-  },
-  {
-    id: "itinerary_agent",
-    name: "Itinerary Specialist",
-    tag: "Groq LLM Synthesis",
-    type: "Synthesis",
-    agentKey: "itinerary_agent",
-    icon: <CalendarCheck className="h-4 w-4 text-indigo-400" />,
-    description: "Drafts cohesive morning, afternoon, and evening day-by-day schedules.",
-  },
-  {
-    id: "human_approval",
-    name: "Human-in-the-Loop Review",
-    tag: "LangGraph Interrupt",
-    type: "HITL Control",
-    icon: <UserCheck className="h-4 w-4 text-amber-400" />,
-    description: "Pauses execution for traveler review, approval, or revision feedback.",
-  },
-  {
-    id: "final_agent",
-    name: "Final Concierge Guide",
-    tag: "Concierge Synthesis",
-    type: "Final Output",
-    icon: <Award className="h-4 w-4 text-rose-400" />,
-    description: "Compiles all specialist reports and feedback into a master travel guide.",
-  },
-];
+function getStepsForMode(mode: string = "hybrid"): StepItem[] {
+  const isPureLLM = mode === "pure_llm";
+  const isJev = mode === "jev";
+
+  return [
+    {
+      id: "supervisor",
+      name: "Supervisor Guardrail & Routing",
+      tag: isPureLLM ? "Groq LLM Prompt-and-Parse (~2.4s)" : isJev ? "Pure TypeSafe Jev Decision Model (~180ms)" : "TypeSafe Jev System 1 (~180ms)",
+      type: isPureLLM ? "LLM JSON Parser" : "Decision Model",
+      icon: <Zap className="h-4 w-4 text-purple-400" />,
+      description: isPureLLM
+        ? "Uses Groq LLM prompt-and-parse JSON to check content policy and route agent tasks."
+        : "Evaluates input safety (Noul), activates specialist agents (Choice), and extracts travel style.",
+    },
+    {
+      id: "flight_agent",
+      name: "Flight Specialist",
+      tag: isPureLLM ? "Aviation Tool + LLM" : "Aviation MCP Tool",
+      type: "Tool + LLM",
+      agentKey: "flight_agent",
+      icon: <Plane className="h-4 w-4 text-sky-400" />,
+      description: "Queries airport databases, hubs, and airlines to advise on routing & fares.",
+    },
+    {
+      id: "hotel_agent",
+      name: "Hotel Specialist",
+      tag: "Tavily Web Search MCP",
+      type: "Live Search",
+      agentKey: "hotel_agent",
+      icon: <Building2 className="h-4 w-4 text-amber-400" />,
+      description: "Searches live accommodation data, boutique stays, and neighborhood lodging.",
+    },
+    {
+      id: "weather_agent",
+      name: "Weather Specialist",
+      tag: "Open-Meteo MCP",
+      type: "Meteorological API",
+      agentKey: "weather_agent",
+      icon: <CloudSun className="h-4 w-4 text-emerald-400" />,
+      description: "Retrieves live current temperature and 7-day extended forecasts.",
+    },
+    {
+      id: "budget_agent",
+      name: "Budget & Risk Specialist",
+      tag: isPureLLM ? "Groq LLM Risk Evaluator" : isJev ? "TypeSafe Jev Score (0-2) + Choice" : "TypeSafe Jev + Groq LLM",
+      type: isPureLLM ? "LLM Analysis" : "Scoring & Analysis",
+      agentKey: "budget_agent",
+      icon: <DollarSign className="h-4 w-4 text-green-400" />,
+      description: isPureLLM
+        ? "Evaluates price risk using standard LLM generative reasoning."
+        : "Calculates feasibility score (0-2), pricing tier, and peak price surge risk via TypeSafe Jev.",
+    },
+    {
+      id: "itinerary_agent",
+      name: "Itinerary Specialist",
+      tag: isJev ? "Jev Structured Synthesis" : "Groq LLM Synthesis",
+      type: "Synthesis",
+      agentKey: "itinerary_agent",
+      icon: <CalendarCheck className="h-4 w-4 text-indigo-400" />,
+      description: "Drafts cohesive morning, afternoon, and evening day-by-day schedules.",
+    },
+    {
+      id: "human_approval",
+      name: "Human-in-the-Loop Review",
+      tag: isJev ? "Review Checkpoint" : "LangGraph Interrupt",
+      type: "HITL Control",
+      icon: <UserCheck className="h-4 w-4 text-amber-400" />,
+      description: "Pauses execution for traveler review, approval, or revision feedback.",
+    },
+    {
+      id: "final_agent",
+      name: "Final Concierge Guide",
+      tag: isPureLLM ? "Groq Concierge (Pure LLM)" : isJev ? "TypeSafe Concierge" : "Master Concierge (Hybrid)",
+      type: "Final Output",
+      icon: <Award className="h-4 w-4 text-rose-400" />,
+      description: "Compiles all specialist reports and feedback into a master travel guide.",
+    },
+  ];
+}
 
 function formatLatency(ms?: number): string {
   if (!ms) return "";
@@ -112,6 +121,8 @@ export const AgentProgressTimeline: FC<AgentProgressTimelineProps> = ({
   plan,
   isLoading,
 }) => {
+  const currentMode = plan?.mode || "hybrid";
+  const steps = getStepsForMode(currentMode);
   const selectedAgents = plan?.selected_agents || [];
   const isBlocked = plan && plan.guardrail_allowed === false;
   const isWaitingApproval = plan?.requires_approval;
@@ -217,16 +228,33 @@ export const AgentProgressTimeline: FC<AgentProgressTimelineProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {plan?.mode && (
+            <div className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 border ${
+              plan.mode === "jev"
+                ? "bg-purple-950/60 border-purple-800/50 text-purple-300"
+                : plan.mode === "pure_llm"
+                ? "bg-slate-900 border-slate-700 text-slate-300"
+                : "bg-indigo-950/60 border-indigo-800/50 text-indigo-300"
+            }`}>
+              <span>
+                {plan.mode === "jev"
+                  ? "⚡ Pure TypeSafe Jev"
+                  : plan.mode === "pure_llm"
+                  ? "🤖 Pure LLM Pipeline"
+                  : "🚀 Hybrid Jev + LLM"}
+              </span>
+            </div>
+          )}
           {times.total_pipeline_ms && (
             <div className="px-3 py-1 rounded-lg bg-emerald-950/50 border border-emerald-800/40 text-[11px] text-emerald-300 font-mono flex items-center gap-1.5">
               <Clock className="h-3.5 w-3.5 text-emerald-400" />
-              <span>Total Latency: <strong>{formatLatency(times.total_pipeline_ms)}</strong></span>
+              <span>Total: <strong>{formatLatency(times.total_pipeline_ms)}</strong></span>
             </div>
           )}
           {plan?.supervisor_reasoning && (
             <div className="px-3 py-1 rounded-lg bg-indigo-950/40 border border-indigo-800/40 text-[11px] text-indigo-300 hidden md:block">
-              <strong>Supervisor:</strong> {plan.selected_agents?.length || 0} active specialists
+              <strong>Active:</strong> {plan.selected_agents?.length || 0} agents
             </div>
           )}
         </div>
@@ -234,7 +262,7 @@ export const AgentProgressTimeline: FC<AgentProgressTimelineProps> = ({
 
       {/* Steps List */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-        {STEPS.map((step) => {
+        {steps.map((step) => {
           const status = getStepStatus(step);
           const latencyDetails = getStepLatencyDetails(step.id);
 
@@ -277,7 +305,7 @@ export const AgentProgressTimeline: FC<AgentProgressTimelineProps> = ({
           } else if (status === "skipped") {
             statusBadge = (
               <span className="flex items-center gap-1 text-[10px] text-slate-600 font-normal">
-                <ArrowRight className="h-3 w-3" /> Skipped (Jev)
+                <ArrowRight className="h-3 w-3" /> {currentMode === "pure_llm" ? "Skipped (LLM)" : "Skipped (Jev)"}
               </span>
             );
             cardBorder = "border-slate-900/60 bg-slate-950/40 opacity-60";

@@ -75,8 +75,8 @@ def get_database_url() -> Optional[str]:
 
 # Model Initializations
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
-llm = ChatGroq(model=GROQ_MODEL, api_key=GROQ_API_KEY, temperature=0.3)
+GROQ_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
+llm = ChatGroq(model=GROQ_MODEL, api_key=GROQ_API_KEY, temperature=0.3, max_tokens=750)
 
 TYPESAFE_API_KEY = os.getenv("TYPESAFE_API_KEY")
 jev_client: Optional[TypeSafeClient] = (

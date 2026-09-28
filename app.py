@@ -284,18 +284,22 @@ def create_trip_plan(request: TripPlanRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="user_query cannot be empty.")
 
     try:
-        # Determine mode
-        chosen_mode = request.mode or "hybrid"
-        if request.use_jev is False:
+        # Determine mode strictly: request.mode is the authoritative source of truth
+        if request.mode and request.mode.strip().lower() in ["jev", "pure_llm", "llm", "hybrid"]:
+            raw = request.mode.strip().lower()
+            chosen_mode = "pure_llm" if raw == "llm" else raw
+        elif request.use_jev is False:
             chosen_mode = "pure_llm"
-        elif request.use_jev is True and chosen_mode not in ["jev", "pure_llm", "hybrid"]:
+        else:
             chosen_mode = "hybrid"
+
+        print(f"[API] 🎯 create_trip_plan invoked with mode='{chosen_mode}' (request.mode='{request.mode}', use_jev={request.use_jev})")
 
         result = run_travel_agent(
             user_input=request.user_query,
             thread_id=request.thread_id,
             mode=chosen_mode,
-            use_jev=request.use_jev
+            use_jev=(chosen_mode != "pure_llm")
         )
 
         record = _save_or_update_trip_plan(db, result, request.user_query)
