@@ -30,6 +30,7 @@ export interface TripPlanResponse {
   guardrail_reason?: string;
   approved?: boolean | null;
   human_feedback?: string;
+  execution_times?: Record<string, number>;
   llm_calls?: number;
   
   id?: number;

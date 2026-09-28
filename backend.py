@@ -89,6 +89,7 @@ import operator
 import uuid
 import asyncio
 import json
+import time
 import psycopg
 from psycopg.rows import dict_row
 
@@ -236,6 +237,7 @@ class TravelState(TypedDict, total=False):
 
     # Execution telemetry
     raw_data: dict[str, Any]
+    execution_times: dict[str, Any]
     llm_calls: int
 
 
@@ -298,10 +300,14 @@ def supervisor_agent(state: TravelState) -> Dict[str, Any]:
     query = state["user_query"]
     llm_calls = state.get("llm_calls", 0)
 
+    t_start = time.perf_counter()
+    times = dict(state.get("execution_times") or {})
+
     # Check if TypeSafe Jev client is initialized with a valid API key
     if jev_client:
         try:
             print("[INFO] Invoking TypeSafe Jev for typed supervisor guardrail and routing...")
+            t_jev_start = time.perf_counter()
             
             # Execute all routing, guardrail, and categorization questions in ONE parallel Jev System One call
             jev_res = jev_client.system_one(
@@ -347,6 +353,8 @@ def supervisor_agent(state: TravelState) -> Dict[str, Any]:
                     )
                 }
             )
+            jev_latency_ms = round((time.perf_counter() - t_jev_start) * 1000, 1)
+            times["supervisor_jev_ms"] = jev_latency_ms
 
             # Extract calibrated answers from TypeSafe Jev response
             is_travel_prob = float(jev_res.nouls["is_travel"].noul)
@@ -358,10 +366,12 @@ def supervisor_agent(state: TravelState) -> Dict[str, Any]:
             dest_score = float(jev_res.scores["destination_clarity"].score)
 
             print(
-                f"[Jev Decision] is_travel={is_travel_prob:.2f}, "
+                f"[Jev Decision] ({jev_latency_ms}ms) is_travel={is_travel_prob:.2f}, "
                 f"flights={flight_prob:.2f}, hotels={hotel_prob:.2f}, "
                 f"weather={weather_prob:.2f}, budget={budget_prob:.2f}, style='{trip_style}'"
             )
+
+            times["supervisor_agent_ms"] = round((time.perf_counter() - t_start) * 1000, 1)
 
             # --- STEP 1: Guardrail Enforcement ---
             # If the user asks something off-topic (e.g. "Write Python code for quicksort"), Jev flags it here
@@ -372,9 +382,10 @@ def supervisor_agent(state: TravelState) -> Dict[str, Any]:
                     "guardrail_reason": reason,
                     "selected_agents": [],
                     "trip_constraints": _empty_constraints(),
-                    "supervisor_reasoning": f"Jev input guardrail rejected with travel probability {is_travel_prob:.2f}",
+                    "supervisor_reasoning": f"Jev input guardrail rejected with travel probability {is_travel_prob:.2f} (evaluated in {jev_latency_ms}ms)",
                     "final_response": reason,
                     "messages": [AIMessage(content=f"Guardrail blocked request: {reason}")],
+                    "execution_times": times,
                     "llm_calls": llm_calls,
                 }
 
@@ -406,7 +417,7 @@ def supervisor_agent(state: TravelState) -> Dict[str, Any]:
             }
 
             reasoning = (
-                f"TypeSafe Jev routed query to {len(selected_agents)} agents: "
+                f"TypeSafe Jev routed query in {jev_latency_ms}ms to {len(selected_agents)} agents: "
                 f"{', '.join(selected_agents)} (Travel Prob: {is_travel_prob:.2f}, Style: {trip_style})."
             )
 
@@ -416,6 +427,7 @@ def supervisor_agent(state: TravelState) -> Dict[str, Any]:
                 "selected_agents": selected_agents,
                 "trip_constraints": constraints,
                 "supervisor_reasoning": reasoning,
+                "execution_times": times,
                 "messages": [AIMessage(content="Supervisor created execution plan via TypeSafe Jev.")],
                 "llm_calls": llm_calls,
             }
@@ -424,6 +436,7 @@ def supervisor_agent(state: TravelState) -> Dict[str, Any]:
             print(f"[WARN] TypeSafe Jev evaluation notice ({exc}). Falling back to standard pipeline...")
 
     # --- Resilient Fallback Pipeline (if Jev offline or unconfigured) ---
+    times["supervisor_agent_ms"] = round((time.perf_counter() - t_start) * 1000, 1)
     selected_agents = AGENT_ORDER.copy()
     destination = extract_destination(query)
     constraints = {
@@ -440,6 +453,7 @@ def supervisor_agent(state: TravelState) -> Dict[str, Any]:
         "selected_agents": selected_agents,
         "trip_constraints": constraints,
         "supervisor_reasoning": "Standard multi-agent full routing pipeline.",
+        "execution_times": times,
         "messages": [AIMessage(content="Supervisor initialized travel specialists.")],
         "llm_calls": llm_calls,
     }
@@ -501,19 +515,16 @@ def flight_agent(state: TravelState) -> Dict[str, Any]:
     Flight Specialist Node:
     -----------------------
     Gathers airport data and airline routes to advise the traveler on flights.
-    
-    FLOW:
-    1. Calls Model Context Protocol (MCP) tool `aviation_mcp_call("list_airports")`
-       and `aviation_mcp_call("list_airlines")` to retrieve grounded airport codes and hubs.
-    2. Constructs a prompt combining the user query and retrieved aviation data.
-    3. Invokes ChatGroq LLM to draft comprehensive flight logistics and pricing advice.
-    4. Writes `flight_results` into state and increments `llm_calls`.
     """
+    t_start = time.perf_counter()
+    times = dict(state.get("execution_times") or {})
     query = state["user_query"]
     try:
         # Call Aviation MCP tool asynchronously
+        t_mcp = time.perf_counter()
         airports = asyncio.run(aviation_mcp_call("list_airports"))
         airlines = asyncio.run(aviation_mcp_call("list_airlines"))
+        times["flight_mcp_ms"] = round((time.perf_counter() - t_mcp) * 1000, 1)
 
         prompt = FLIGHT_AGENT_PROMPT.format(
             query=query,
@@ -521,19 +532,23 @@ def flight_agent(state: TravelState) -> Dict[str, Any]:
             airline_data=str(airlines)[:600],
         )
 
+        t_llm = time.perf_counter()
         response = llm.invoke(
             [
                 SystemMessage(content="You are an expert travel flight planner."),
                 HumanMessage(content=prompt),
             ]
         )
+        times["flight_llm_ms"] = round((time.perf_counter() - t_llm) * 1000, 1)
         flight_data = response.content
     except Exception as exc:
-        # Graceful fallback in case of network or tool timeout
         flight_data = f"Flight information compiled with estimated routing. (Notice: {exc})"
+
+    times["flight_agent_ms"] = round((time.perf_counter() - t_start) * 1000, 1)
 
     return {
         "flight_results": flight_data,
+        "execution_times": times,
         "messages": [AIMessage(content="Flight recommendations generated.")],
         "llm_calls": state.get("llm_calls", 0) + 1,
     }
@@ -547,20 +562,22 @@ def hotel_agent(state: TravelState) -> Dict[str, Any]:
     Hotel Specialist Node:
     ----------------------
     Discovers accommodations using live real-time web intelligence.
-    
-    FLOW:
-    1. Constructs a targeted search query for top-rated hotels, boutique stays, and neighborhoods.
-    2. Calls Tavily MCP Search tool (`tavily_mcp_search`) to retrieve live, current lodging options.
-    3. Stores live hotel suggestions into `hotel_results` in the shared TravelState.
     """
+    t_start = time.perf_counter()
+    times = dict(state.get("execution_times") or {})
     query = f"Best hotels and places to stay for {state['user_query']}"
     try:
+        t_mcp = time.perf_counter()
         hotel_results = asyncio.run(tavily_mcp_search(query))
+        times["hotel_mcp_ms"] = round((time.perf_counter() - t_mcp) * 1000, 1)
     except Exception as exc:
         hotel_results = f"Accommodation suggestions generated with neighborhood guidance. (Notice: {exc})"
 
+    times["hotel_agent_ms"] = round((time.perf_counter() - t_start) * 1000, 1)
+
     return {
         "hotel_results": hotel_results,
+        "execution_times": times,
         "messages": [AIMessage(content="Hotel accommodations processed.")],
         "llm_calls": state.get("llm_calls", 0) + 1,
     }
@@ -574,23 +591,24 @@ def weather_agent(state: TravelState) -> Dict[str, Any]:
     Weather Specialist Node:
     ------------------------
     Fetches real-time weather and 7-day meteorological forecasts to enable weather-adaptive plans.
-    
-    FLOW:
-    1. Extracts the destination city name from the user query.
-    2. Calls Open-Meteo Weather MCP tool for current temperature, precipitation, and conditions.
-    3. Calls Open-Meteo 7-day forecast MCP tool to get extended forecast data.
-    4. Combines the reports into `weather_results` for the Itinerary and Final agents.
     """
+    t_start = time.perf_counter()
+    times = dict(state.get("execution_times") or {})
     city = extract_destination(state["user_query"])
     try:
+        t_mcp = time.perf_counter()
         weather_data = asyncio.run(weather_mcp_search(city))
         forecast_data = asyncio.run(forecast_mcp_search(city))
+        times["weather_mcp_ms"] = round((time.perf_counter() - t_mcp) * 1000, 1)
         weather_results = f"Current Weather in {city}:\n{weather_data}\n\nExtended Forecast:\n{forecast_data}"
     except Exception as exc:
         weather_results = f"Seasonal weather guidance provided for {city}. (Notice: {exc})"
 
+    times["weather_agent_ms"] = round((time.perf_counter() - t_start) * 1000, 1)
+
     return {
         "weather_results": weather_results,
+        "execution_times": times,
         "messages": [AIMessage(content="Weather data analyzed.")],
     }
 
@@ -603,21 +621,9 @@ def budget_agent(state: TravelState) -> Dict[str, Any]:
     Budget Specialist Node:
     -----------------------
     Combines TypeSafe Jev's calibrated mathematical models with Groq's generative prose.
-    
-    WHAT TYPESAFE JEV IS DOING HERE:
-    1. `Score("feasibility")`:
-       - Rates budget feasibility on a 3-tier ordered rubric [0, 1, 2]
-         (0 = tight overrun risk, 1 = feasible mid-range, 2 = generous spending buffer).
-       - Jev returns an expected value score (e.g. 1.74 / 2.00) based on calibrated probabilities.
-    2. `Choice("pricing_tier")`:
-       - Classifies the expected daily spending tier: 'budget' ($50-$100/day),
-         'moderate' ($100-$250/day), or 'luxury' ($250+/day).
-    3. `Noul("peak_risk")`:
-       - Calculates binary probability [0.0 - 1.0] of unexpected expenses or peak season surge pricing.
-       
-    The Groq LLM then generates an itemized daily cost breakdown, money-saving tips, and financial
-    safety warnings, enriched by Jev's quantitative evaluation.
     """
+    t_start = time.perf_counter()
+    times = dict(state.get("execution_times") or {})
     query = state["user_query"]
     constraints = state.get("trip_constraints", {})
     style = constraints.get("travel_style", "general")
@@ -626,6 +632,7 @@ def budget_agent(state: TravelState) -> Dict[str, Any]:
     jev_budget_summary = ""
     if jev_client:
         try:
+            t_jev = time.perf_counter()
             b_eval = jev_client.system_one(
                 state={
                     "user_query": query,
@@ -656,6 +663,7 @@ def budget_agent(state: TravelState) -> Dict[str, Any]:
                     )
                 }
             )
+            times["budget_jev_ms"] = round((time.perf_counter() - t_jev) * 1000, 1)
 
             score_val = float(b_eval.scores["feasibility"].score)
             tier_val = str(b_eval.choices["pricing_tier"].choice)
@@ -686,17 +694,21 @@ Provide:
 4. Budget Risk Warnings
 """
 
+    t_llm = time.perf_counter()
     response = llm.invoke(
         [
             SystemMessage(content="You are a professional travel budget analyst."),
             HumanMessage(content=prompt),
         ]
     )
+    times["budget_llm_ms"] = round((time.perf_counter() - t_llm) * 1000, 1)
+    times["budget_agent_ms"] = round((time.perf_counter() - t_start) * 1000, 1)
 
     budget_content = f"{jev_budget_summary}{response.content}"
 
     return {
         "budget_results": budget_content,
+        "execution_times": times,
         "messages": [AIMessage(content="Budget feasibility analysis completed.")],
         "llm_calls": state.get("llm_calls", 0) + 1,
     }
@@ -725,15 +737,11 @@ def itinerary_agent(state: TravelState) -> Dict[str, Any]:
     """
     Itinerary Specialist Node:
     --------------------------
-    Synthesizes the findings of all upstream specialists (Flights, Hotels, Weather, Budget)
-    into a coherent, realistic day-by-day schedule.
-    
-    FLOW:
-    1. Gathers accumulated specialist findings from state.
-    2. Prompts Groq LLM to generate a draft day-by-day travel itinerary.
-    3. Prepares an approval request string for human review.
-    4. Saves draft into `itinerary` and `approval_request` fields in state.
+    Synthesizes the findings of all upstream specialists into a coherent day-by-day schedule.
     """
+    t_start = time.perf_counter()
+    times = dict(state.get("execution_times") or {})
+
     prompt = ITINERARY_PROMPT.format(
         user_query=state["user_query"],
         flight_results=state.get("flight_results", "")[:800],
@@ -742,12 +750,15 @@ def itinerary_agent(state: TravelState) -> Dict[str, Any]:
         budget_results=state.get("budget_results", "")[:800],
     )
 
+    t_llm = time.perf_counter()
     response = llm.invoke(
         [
             SystemMessage(content="You are a professional travel itinerary creator."),
             HumanMessage(content=prompt),
         ]
     )
+    times["itinerary_llm_ms"] = round((time.perf_counter() - t_llm) * 1000, 1)
+    times["itinerary_agent_ms"] = round((time.perf_counter() - t_start) * 1000, 1)
 
     approval_request = (
         "Please review the generated draft itinerary. Approve it to finalize the trip plan, "
@@ -757,6 +768,7 @@ def itinerary_agent(state: TravelState) -> Dict[str, Any]:
     return {
         "itinerary": response.content,
         "approval_request": approval_request,
+        "execution_times": times,
         "messages": [AIMessage(content="Draft itinerary generated for human review.")],
         "llm_calls": state.get("llm_calls", 0) + 1,
     }
@@ -770,14 +782,6 @@ def human_approval_agent(state: TravelState) -> Dict[str, Any]:
     Human-in-the-Loop (HITL) Node:
     ------------------------------
     Pauses graph execution using LangGraph's native `interrupt()` function.
-    
-    HOW HITL WORKS:
-    1. When `interrupt()` is called, LangGraph saves the current thread state to PostgreSQL / Memory
-       and halts execution immediately.
-    2. The API returns the draft itinerary and `requires_approval: true` to the client.
-    3. When the user approves or submits feedback, the client calls `POST /api/plans/{thread_id}/resume`.
-    4. LangGraph resumes from this exact node using `Command(resume=...)`, populating `approved`
-       and `human_feedback` in state.
     """
     review = interrupt(
         {
@@ -835,9 +839,11 @@ def final_agent(state: TravelState) -> Dict[str, Any]:
     """
     Final Concierge Node:
     ---------------------
-    Produces the complete, publication-grade travel guide by synthesizing all specialist outputs,
-    weather adjustments, and any human feedback.
+    Produces the complete travel guide by synthesizing all specialist outputs.
     """
+    t_start = time.perf_counter()
+    times = dict(state.get("execution_times") or {})
+
     prompt = FINAL_PROMPT.format(
         user_query=state["user_query"],
         flight_results=state.get("flight_results", ""),
@@ -848,15 +854,19 @@ def final_agent(state: TravelState) -> Dict[str, Any]:
         human_feedback=state.get("human_feedback", "Draft approved as submitted."),
     )
 
+    t_llm = time.perf_counter()
     response = llm.invoke(
         [
             SystemMessage(content="You are an elite AI Travel Concierge."),
             HumanMessage(content=prompt),
         ]
     )
+    times["final_llm_ms"] = round((time.perf_counter() - t_llm) * 1000, 1)
+    times["final_agent_ms"] = round((time.perf_counter() - t_start) * 1000, 1)
 
     return {
         "final_response": response.content,
+        "execution_times": times,
         "messages": [response],
         "llm_calls": state.get("llm_calls", 0) + 1,
     }
@@ -1060,6 +1070,7 @@ def _serialize_result(result: Dict[str, Any], thread_id: str) -> Dict[str, Any]:
         "guardrail_reason": result.get("guardrail_reason", ""),
         "approved": result.get("approved"),
         "human_feedback": result.get("human_feedback", ""),
+        "execution_times": result.get("execution_times", {}),
         "raw_data": {k: v for k, v in result.items() if k != "messages"},
         "llm_calls": result.get("llm_calls", 0),
     }
@@ -1070,14 +1081,6 @@ def run_travel_agent(user_input: str, thread_id: Optional[str] = None) -> Dict[s
     Primary API Entrypoint:
     -----------------------
     Executes a new travel planning request through the StateGraph.
-    
-    Args:
-        user_input: Raw travel query from user.
-        thread_id: Optional thread ID (auto-generated if None).
-        
-    Returns:
-        Complete serialized dictionary containing all specialist findings, Jev decisions,
-        and final formatted proposal.
     """
     if not thread_id:
         thread_id = f"trip_{uuid.uuid4().hex[:12]}"
@@ -1087,6 +1090,8 @@ def run_travel_agent(user_input: str, thread_id: Optional[str] = None) -> Dict[s
             "thread_id": thread_id
         }
     }
+
+    t_overall_start = time.perf_counter()
 
     result = travel_graph.invoke(
         {
@@ -1108,10 +1113,15 @@ def run_travel_agent(user_input: str, thread_id: Optional[str] = None) -> Dict[s
             "approved": False,
             "human_feedback": "",
             "final_response": "",
+            "execution_times": {},
             "llm_calls": 0,
         },
         config=config
     )
+
+    times = dict(result.get("execution_times") or {})
+    times["total_pipeline_ms"] = round((time.perf_counter() - t_overall_start) * 1000, 1)
+    result["execution_times"] = times
 
     return _serialize_result(result, thread_id)
 
@@ -1125,19 +1135,12 @@ def resume_travel_agent(
     Human-in-the-Loop Resume Entrypoint:
     ------------------------------------
     Resumes a paused LangGraph thread following human review.
-    
-    Args:
-        thread_id: The thread ID of the paused execution.
-        approved: True if approved, False if revisions requested.
-        feedback: Human instructions for revision if approved=False.
-        
-    Returns:
-        Updated serialized dictionary containing the finalized response.
     """
     if not thread_id:
         raise ValueError("thread_id is required to resume a travel plan.")
 
     config = {"configurable": {"thread_id": thread_id}}
+    t_resume_start = time.perf_counter()
     result = travel_graph.invoke(
         Command(
             resume={
@@ -1147,5 +1150,9 @@ def resume_travel_agent(
         ),
         config=config,
     )
+
+    times = dict(result.get("execution_times") or {})
+    times["resume_pipeline_ms"] = round((time.perf_counter() - t_resume_start) * 1000, 1)
+    result["execution_times"] = times
 
     return _serialize_result(result, thread_id)

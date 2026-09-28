@@ -102,6 +102,12 @@ const STEPS: StepItem[] = [
   },
 ];
 
+function formatLatency(ms?: number): string {
+  if (!ms) return "";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
+}
+
 export const AgentProgressTimeline: FC<AgentProgressTimelineProps> = ({
   plan,
   isLoading,
@@ -110,6 +116,7 @@ export const AgentProgressTimeline: FC<AgentProgressTimelineProps> = ({
   const isBlocked = plan && plan.guardrail_allowed === false;
   const isWaitingApproval = plan?.requires_approval;
   const isApproved = plan?.approved === true;
+  const times = plan?.execution_times || {};
 
   const getStepStatus = (step: StepItem) => {
     if (!plan && !isLoading) return "idle";
@@ -151,6 +158,52 @@ export const AgentProgressTimeline: FC<AgentProgressTimelineProps> = ({
     return "idle";
   };
 
+  const getStepLatencyDetails = (stepId: string) => {
+    switch (stepId) {
+      case "supervisor":
+        if (times.supervisor_jev_ms) {
+          return `⚡ Jev: ${formatLatency(times.supervisor_jev_ms)}`;
+        }
+        return times.supervisor_agent_ms ? `⏱ ${formatLatency(times.supervisor_agent_ms)}` : null;
+      case "flight_agent":
+        if (times.flight_llm_ms && times.flight_mcp_ms) {
+          return `✈ MCP: ${formatLatency(times.flight_mcp_ms)} · 🤖 LLM: ${formatLatency(times.flight_llm_ms)}`;
+        }
+        return times.flight_agent_ms ? `⏱ ${formatLatency(times.flight_agent_ms)}` : null;
+      case "hotel_agent":
+        return times.hotel_mcp_ms
+          ? `🌐 Tavily Search: ${formatLatency(times.hotel_mcp_ms)}`
+          : times.hotel_agent_ms
+          ? `⏱ ${formatLatency(times.hotel_agent_ms)}`
+          : null;
+      case "weather_agent":
+        return times.weather_mcp_ms
+          ? `⛅ Open-Meteo: ${formatLatency(times.weather_mcp_ms)}`
+          : times.weather_agent_ms
+          ? `⏱ ${formatLatency(times.weather_agent_ms)}`
+          : null;
+      case "budget_agent":
+        if (times.budget_jev_ms && times.budget_llm_ms) {
+          return `⚡ Jev: ${formatLatency(times.budget_jev_ms)} · 🤖 LLM: ${formatLatency(times.budget_llm_ms)}`;
+        }
+        return times.budget_agent_ms ? `⏱ ${formatLatency(times.budget_agent_ms)}` : null;
+      case "itinerary_agent":
+        return times.itinerary_llm_ms
+          ? `🤖 Groq LLM: ${formatLatency(times.itinerary_llm_ms)}`
+          : times.itinerary_agent_ms
+          ? `⏱ ${formatLatency(times.itinerary_agent_ms)}`
+          : null;
+      case "final_agent":
+        return times.final_llm_ms
+          ? `🤖 Groq Concierge: ${formatLatency(times.final_llm_ms)}`
+          : times.final_agent_ms
+          ? `⏱ ${formatLatency(times.final_agent_ms)}`
+          : null;
+      default:
+        return null;
+    }
+  };
+
   return (
     <div className="w-full glass-panel rounded-2xl p-5 sm:p-6 border border-slate-800 shadow-xl">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 mb-4 border-b border-slate-800">
@@ -160,21 +213,30 @@ export const AgentProgressTimeline: FC<AgentProgressTimelineProps> = ({
             Multi-Agent Execution Pipeline Flow
           </h2>
           <p className="text-xs text-slate-400">
-            Real-time visual audit trail of LangGraph state transitions and TypeSafe Jev routing
+            Real-time visual audit trail of LangGraph state transitions, TypeSafe Jev decisions & LLM latencies
           </p>
         </div>
 
-        {plan?.supervisor_reasoning && (
-          <div className="px-3 py-1 rounded-lg bg-indigo-950/40 border border-indigo-800/40 text-[11px] text-indigo-300">
-            <strong>Supervisor:</strong> {plan.selected_agents?.length || 0} active specialists routed
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          {times.total_pipeline_ms && (
+            <div className="px-3 py-1 rounded-lg bg-emerald-950/50 border border-emerald-800/40 text-[11px] text-emerald-300 font-mono flex items-center gap-1.5">
+              <Clock className="h-3.5 w-3.5 text-emerald-400" />
+              <span>Total Latency: <strong>{formatLatency(times.total_pipeline_ms)}</strong></span>
+            </div>
+          )}
+          {plan?.supervisor_reasoning && (
+            <div className="px-3 py-1 rounded-lg bg-indigo-950/40 border border-indigo-800/40 text-[11px] text-indigo-300 hidden md:block">
+              <strong>Supervisor:</strong> {plan.selected_agents?.length || 0} active specialists
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Steps List */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
         {STEPS.map((step) => {
           const status = getStepStatus(step);
+          const latencyDetails = getStepLatencyDetails(step.id);
 
           let statusBadge = (
             <span className="flex items-center gap-1 text-[10px] text-slate-500 font-medium">
@@ -244,6 +306,16 @@ export const AgentProgressTimeline: FC<AgentProgressTimelineProps> = ({
                   {step.description}
                 </p>
               </div>
+
+              {/* Step Latency Breakdown Badge */}
+              {status === "completed" && latencyDetails && (
+                <div className="mt-3 pt-2 border-t border-slate-800/60 flex items-center justify-between text-[10px] font-mono text-slate-300">
+                  <span className="text-slate-400">Time Taken:</span>
+                  <span className="px-1.5 py-0.5 rounded bg-slate-950 border border-slate-800 text-indigo-300 font-semibold">
+                    {latencyDetails}
+                  </span>
+                </div>
+              )}
             </div>
           );
         })}

@@ -108,6 +108,7 @@ class TripPlanResponse(BaseModel):
     trip_constraints: Optional[Dict[str, Any]] = None
     supervisor_reasoning: Optional[str] = None
     raw_data: Optional[Dict[str, Any]] = None
+    execution_times: Optional[Dict[str, Any]] = None
     llm_calls: int = 0
     created_at: Optional[datetime] = None
 
@@ -184,6 +185,7 @@ def _save_or_update_trip_plan(db: Session, result: Dict[str, Any], user_query: s
     trip_constraints = result.get("trip_constraints", {})
     supervisor_reasoning = result.get("supervisor_reasoning", "")
     raw_data = result.get("raw_data") or result
+    execution_times = result.get("execution_times") or {}
     llm_calls = result.get("llm_calls", 0)
 
     existing_plan = db.query(TripPlan).filter(TripPlan.thread_id == thread_id).first()
@@ -205,6 +207,7 @@ def _save_or_update_trip_plan(db: Session, result: Dict[str, Any], user_query: s
         existing_plan.trip_constraints = trip_constraints
         existing_plan.supervisor_reasoning = supervisor_reasoning
         existing_plan.raw_data = raw_data
+        existing_plan.execution_times = execution_times
         existing_plan.llm_calls = llm_calls
         existing_plan.created_at = datetime.utcnow()
         db.commit()
@@ -230,6 +233,7 @@ def _save_or_update_trip_plan(db: Session, result: Dict[str, Any], user_query: s
             trip_constraints=trip_constraints,
             supervisor_reasoning=supervisor_reasoning,
             raw_data=raw_data,
+            execution_times=execution_times,
             llm_calls=llm_calls,
             created_at=datetime.utcnow()
         )
@@ -280,6 +284,7 @@ def create_trip_plan(request: TripPlanRequest, db: Session = Depends(get_db)):
             trip_constraints=record.trip_constraints,
             supervisor_reasoning=record.supervisor_reasoning,
             raw_data=record.raw_data,
+            execution_times=record.execution_times,
             llm_calls=record.llm_calls,
             created_at=record.created_at
         )
@@ -345,6 +350,7 @@ def resume_trip_plan(
             trip_constraints=record.trip_constraints,
             supervisor_reasoning=record.supervisor_reasoning,
             raw_data=record.raw_data,
+            execution_times=record.execution_times,
             llm_calls=record.llm_calls,
             created_at=record.created_at
         )

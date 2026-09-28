@@ -119,6 +119,11 @@ export const ItineraryViewer: FC<ItineraryViewerProps> = ({ plan }) => {
             <Sparkles className="h-3.5 w-3.5 text-purple-400" />
             <span>Style: <strong className="capitalize">{constraints.travel_style || "General"}</strong></span>
           </div>
+          {plan.execution_times?.total_pipeline_ms && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-800/40 text-emerald-300 font-mono text-[11px]">
+              <span>⏱ Total Time: <strong>{plan.execution_times.total_pipeline_ms < 1000 ? `${Math.round(plan.execution_times.total_pipeline_ms)}ms` : `${(plan.execution_times.total_pipeline_ms / 1000).toFixed(2)}s`}</strong></span>
+            </div>
+          )}
           {plan.llm_calls !== undefined && (
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900/80 border border-slate-800 text-slate-400 font-mono text-[11px] ml-auto">
               <span>LLM Calls: {plan.llm_calls}</span>
