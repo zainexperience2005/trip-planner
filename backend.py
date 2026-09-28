@@ -187,6 +187,21 @@ def hybrid_supervisor_agent(state: TravelState) -> Dict[str, Any]:
     times["supervisor_jev_ms"] = jev_latency_ms
     times["supervisor_agent_ms"] = round((time.perf_counter() - t_start) * 1000, 1)
 
+    # Print clear, structured Jev terminal output & latency log
+    print("\n" + "=" * 65)
+    print(f"⚡ [TypeSafe Jev System 1 Decision Model] (Hybrid Pipeline)")
+    print(f"⏱ Execution Latency: {jev_latency_ms}ms (0 Tokens Used)")
+    print(f"📥 Input Query: '{query}'")
+    print(f"📊 Jev Probability & Decision Outputs:")
+    print(f"   • is_travel (Noul):           {is_travel_prob:.3f} [{'PASSED' if is_travel_prob >= 0.35 else 'BLOCKED'}]")
+    print(f"   • needs_flights (Noul):       {flight_prob:.3f} [{'Active' if flight_prob >= 0.20 else 'Skipped'}]")
+    print(f"   • needs_hotels (Noul):        {hotel_prob:.3f} [{'Active' if hotel_prob >= 0.30 else 'Skipped'}]")
+    print(f"   • needs_weather (Noul):       {weather_prob:.3f} [{'Active' if weather_prob >= 0.30 else 'Skipped'}]")
+    print(f"   • needs_budget (Noul):        {budget_prob:.3f} [{'Active' if budget_prob >= 0.35 else 'Skipped'}]")
+    print(f"   • trip_style (Choice):        '{trip_style}'")
+    print(f"   • destination_clarity (Score): {dest_score:.2f} / 2.0")
+    print("=" * 65 + "\n")
+
     speedup = round(2200 / max(1, jev_latency_ms), 1)
     comparison = {
         "active_mode": "hybrid",
@@ -204,6 +219,7 @@ def hybrid_supervisor_agent(state: TravelState) -> Dict[str, Any]:
 
     if is_travel_prob < 0.35:
         reason = "TripMate AI can only help with travel-planning requests."
+        print(f"🚫 [GUARDRAIL BLOCKED] Query rejected by TypeSafe Jev guardrail (prob={is_travel_prob:.3f})")
         return {
             "guardrail_allowed": False,
             "guardrail_reason": reason,
@@ -230,6 +246,8 @@ def hybrid_supervisor_agent(state: TravelState) -> Dict[str, Any]:
         selected_agents.append("budget_agent")
     if "itinerary_agent" not in selected_agents:
         selected_agents.append("itinerary_agent")
+
+    print(f"🎯 [ROUTING ACTIVATED] Dispatched to specialists: {', '.join(selected_agents)}")
 
     destination = extract_destination(query)
     constraints = {
@@ -374,6 +392,12 @@ def hybrid_budget_agent(state: TravelState) -> Dict[str, Any]:
                 f"- **Pricing Tier:** {tier_val.capitalize()}\n"
                 f"- **Peak Price Risk:** {risk_val * 100:.1f}%\n\n"
             )
+            print("-" * 55)
+            print(f"⚡ [TypeSafe Jev Budget Evaluation] Finished in {times['budget_jev_ms']}ms")
+            print(f"   • feasibility (Score):  {score_val:.2f} / 2.00")
+            print(f"   • pricing_tier (Choice): '{tier_val}'")
+            print(f"   • peak_risk (Noul):     {risk_val:.3f} ({risk_val * 100:.1f}%)")
+            print("-" * 55)
         except Exception as e:
             print(f"[DEBUG] Notice on Jev budget evaluation: {e}")
 
