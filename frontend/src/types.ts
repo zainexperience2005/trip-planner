@@ -31,6 +31,8 @@ export interface TripPlanResponse {
   approved?: boolean | null;
   human_feedback?: string;
   execution_times?: Record<string, number>;
+  comparison_metrics?: Record<string, any>;
+  use_jev?: boolean;
   llm_calls?: number;
   
   id?: number;

@@ -70,6 +70,11 @@ class TripPlanRequest(BaseModel):
         description="Optional unique session/thread identifier for state persistence.",
         example="trip_tokyo_001"
     )
+    use_jev: Optional[bool] = Field(
+        True,
+        description="Enable TypeSafe Jev System 1 for routing and guardrails (True) or pure LLM mode (False).",
+        example=True
+    )
 
 
 class ResumeTripPlanRequest(BaseModel):
@@ -109,6 +114,8 @@ class TripPlanResponse(BaseModel):
     supervisor_reasoning: Optional[str] = None
     raw_data: Optional[Dict[str, Any]] = None
     execution_times: Optional[Dict[str, Any]] = None
+    comparison_metrics: Optional[Dict[str, Any]] = None
+    use_jev: Optional[bool] = True
     llm_calls: int = 0
     created_at: Optional[datetime] = None
 
@@ -186,6 +193,8 @@ def _save_or_update_trip_plan(db: Session, result: Dict[str, Any], user_query: s
     supervisor_reasoning = result.get("supervisor_reasoning", "")
     raw_data = result.get("raw_data") or result
     execution_times = result.get("execution_times") or {}
+    comparison_metrics = result.get("comparison_metrics") or {}
+    use_jev = result.get("use_jev", True)
     llm_calls = result.get("llm_calls", 0)
 
     existing_plan = db.query(TripPlan).filter(TripPlan.thread_id == thread_id).first()
@@ -208,6 +217,8 @@ def _save_or_update_trip_plan(db: Session, result: Dict[str, Any], user_query: s
         existing_plan.supervisor_reasoning = supervisor_reasoning
         existing_plan.raw_data = raw_data
         existing_plan.execution_times = execution_times
+        existing_plan.comparison_metrics = comparison_metrics
+        existing_plan.use_jev = use_jev
         existing_plan.llm_calls = llm_calls
         existing_plan.created_at = datetime.utcnow()
         db.commit()
@@ -234,6 +245,8 @@ def _save_or_update_trip_plan(db: Session, result: Dict[str, Any], user_query: s
             supervisor_reasoning=supervisor_reasoning,
             raw_data=raw_data,
             execution_times=execution_times,
+            comparison_metrics=comparison_metrics,
+            use_jev=use_jev,
             llm_calls=llm_calls,
             created_at=datetime.utcnow()
         )
@@ -257,10 +270,12 @@ def create_trip_plan(request: TripPlanRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="user_query cannot be empty.")
 
     try:
-        # Run LangGraph multi-agent pipeline
+        # Run LangGraph multi-agent pipeline with selected mode (Jev vs Pure LLM)
+        use_jev_flag = True if request.use_jev is None else bool(request.use_jev)
         result = run_travel_agent(
             user_input=request.user_query,
-            thread_id=request.thread_id
+            thread_id=request.thread_id,
+            use_jev=use_jev_flag
         )
 
         record = _save_or_update_trip_plan(db, result, request.user_query)
@@ -285,6 +300,8 @@ def create_trip_plan(request: TripPlanRequest, db: Session = Depends(get_db)):
             supervisor_reasoning=record.supervisor_reasoning,
             raw_data=record.raw_data,
             execution_times=record.execution_times,
+            comparison_metrics=record.comparison_metrics,
+            use_jev=record.use_jev,
             llm_calls=record.llm_calls,
             created_at=record.created_at
         )
@@ -351,6 +368,8 @@ def resume_trip_plan(
             supervisor_reasoning=record.supervisor_reasoning,
             raw_data=record.raw_data,
             execution_times=record.execution_times,
+            comparison_metrics=record.comparison_metrics,
+            use_jev=record.use_jev,
             llm_calls=record.llm_calls,
             created_at=record.created_at
         )

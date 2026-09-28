@@ -37,13 +37,14 @@ export async function checkBackendHealth(): Promise<{ status: string; database?:
   }
 }
 
-export async function createTripPlan(query: string, origin?: string, threadId?: string): Promise<TripPlanResponse> {
+export async function createTripPlan(query: string, origin?: string, threadId?: string, useJev: boolean = true): Promise<TripPlanResponse> {
   const fullQuery = origin && origin.trim() && origin.trim().toUpperCase() !== "DAC"
     ? `${query} (Origin airport: ${origin.trim().toUpperCase()})`
     : query;
 
   const payload: Record<string, any> = {
     user_query: fullQuery,
+    use_jev: useJev,
   };
   if (threadId) payload.thread_id = threadId;
 

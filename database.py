@@ -59,6 +59,8 @@ class TripPlan(Base):
     supervisor_reasoning = Column(Text, nullable=True)
     raw_data = Column(JSON, nullable=True)
     execution_times = Column(JSON, nullable=True)
+    comparison_metrics = Column(JSON, nullable=True)
+    use_jev = Column(Boolean, default=True, nullable=True)
     llm_calls = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -103,6 +105,8 @@ def _ensure_columns(engine_instance):
                 "supervisor_reasoning": "TEXT",
                 "raw_data": "JSON",
                 "execution_times": "JSON",
+                "comparison_metrics": "JSON",
+                "use_jev": "BOOLEAN DEFAULT 1",
             }
             with engine_instance.begin() as conn:
                 for col_name, col_type in new_cols.items():

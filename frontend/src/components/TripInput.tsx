@@ -2,8 +2,10 @@ import { useState, type FC, type FormEvent, type KeyboardEvent } from "react";
 import { Send, Sparkles, Plane, Compass, AlertCircle } from "lucide-react";
 
 interface TripInputProps {
-  onSubmit: (query: string, origin: string) => void;
+  onSubmit: (query: string, origin: string, useJev: boolean) => void;
   isLoading: boolean;
+  useJev: boolean;
+  setUseJev: (val: boolean) => void;
 }
 
 const PRESET_PROMPTS = [
@@ -25,7 +27,7 @@ const PRESET_PROMPTS = [
   },
 ];
 
-export const TripInput: FC<TripInputProps> = ({ onSubmit, isLoading }) => {
+export const TripInput: FC<TripInputProps> = ({ onSubmit, isLoading, useJev, setUseJev }) => {
   const [query, setQuery] = useState("");
   const [origin, setOrigin] = useState("DAC");
   const [error, setError] = useState("");
@@ -37,7 +39,7 @@ export const TripInput: FC<TripInputProps> = ({ onSubmit, isLoading }) => {
       return;
     }
     setError("");
-    onSubmit(query.trim(), origin.trim() || "DAC");
+    onSubmit(query.trim(), origin.trim() || "DAC", useJev);
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -54,23 +56,56 @@ export const TripInput: FC<TripInputProps> = ({ onSubmit, isLoading }) => {
       <div className="absolute bottom-0 left-0 w-72 h-72 bg-indigo-600/10 rounded-full blur-3xl pointer-events-none" />
 
       <form onSubmit={handleSubmit} className="relative z-10 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        {/* Header Controls: Label, Architecture Mode Selector, Airport Origin */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           <label htmlFor="travel-query" className="text-sm font-semibold text-slate-200 flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-indigo-400" />
             Where would you like to travel?
           </label>
-          <div className="flex items-center gap-2 text-xs text-slate-400">
-            <span className="flex items-center gap-1">
-              <Plane className="h-3.5 w-3.5 text-slate-400" /> Origin Airport:
-            </span>
-            <input
-              type="text"
-              value={origin}
-              onChange={(e) => setOrigin(e.target.value.toUpperCase())}
-              placeholder="DAC"
-              maxLength={4}
-              className="w-16 px-2 py-1 bg-slate-900 border border-slate-700/80 rounded font-mono text-center text-xs font-semibold text-indigo-300 focus:ring-1 focus:ring-indigo-500 outline-none uppercase"
-            />
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Architecture Mode Selector Toggle */}
+            <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+              <button
+                type="button"
+                onClick={() => setUseJev(true)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-semibold transition-all ${
+                  useJev
+                    ? "bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md shadow-purple-600/20"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+                title="Use TypeSafe Jev System 1 for ~180ms routing & 0 token guardrail"
+              >
+                <span>⚡ TypeSafe Jev (Fast)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setUseJev(false)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-semibold transition-all ${
+                  !useJev
+                    ? "bg-slate-800 text-indigo-300 shadow-md border border-slate-700"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+                title="Use traditional Groq Prompt & Parse JSON Router for comparison"
+              >
+                <span>🤖 Pure LLM Mode</span>
+              </button>
+            </div>
+
+            {/* Airport Origin */}
+            <div className="flex items-center gap-1.5 text-xs text-slate-400 bg-slate-950 px-2.5 py-1 rounded-xl border border-slate-800">
+              <span className="flex items-center gap-1">
+                <Plane className="h-3.5 w-3.5 text-slate-400" /> Origin:
+              </span>
+              <input
+                type="text"
+                value={origin}
+                onChange={(e) => setOrigin(e.target.value.toUpperCase())}
+                placeholder="DAC"
+                maxLength={4}
+                className="w-14 px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded font-mono text-center text-xs font-semibold text-indigo-300 focus:ring-1 focus:ring-indigo-500 outline-none uppercase"
+              />
+            </div>
           </div>
         </div>
 

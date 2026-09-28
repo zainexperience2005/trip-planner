@@ -3,6 +3,7 @@ import { Header } from "./components/Header";
 import { TripInput } from "./components/TripInput";
 import { AgentProgressTimeline } from "./components/AgentProgressTimeline";
 import { JevDecisionCard } from "./components/JevDecisionCard";
+import { BenchmarkComparisonCard } from "./components/BenchmarkComparisonCard";
 import { HitlReviewCard } from "./components/HitlReviewCard";
 import { SpecialistResultsView } from "./components/SpecialistResultsView";
 import { ItineraryViewer } from "./components/ItineraryViewer";
@@ -14,6 +15,7 @@ import { AlertCircle, ShieldAlert } from "lucide-react";
 export function App() {
   const [backendHealth, setBackendHealth] = useState<{ status: string; database?: string; jev_ready?: boolean }>({ status: "checking" });
   const [currentPlan, setCurrentPlan] = useState<TripPlanResponse | null>(null);
+  const [useJev, setUseJev] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,11 +41,11 @@ export function App() {
     setIsHistoryLoading(false);
   };
 
-  const handleCreatePlan = async (query: string, origin: string) => {
+  const handleCreatePlan = async (query: string, origin: string, withJev: boolean = useJev) => {
     setIsLoading(true);
     setError(null);
     try {
-      const result = await createTripPlan(query, origin);
+      const result = await createTripPlan(query, origin, undefined, withJev);
       setCurrentPlan(result);
       loadHistory();
     } catch (err: any) {
@@ -74,6 +76,9 @@ export function App() {
     try {
       const plan = await getPlanDetails(threadId);
       setCurrentPlan(plan);
+      if (typeof plan.use_jev === "boolean") {
+        setUseJev(plan.use_jev);
+      }
     } catch (err: any) {
       setError(err.message || "Failed to load selected plan.");
     } finally {
@@ -121,8 +126,13 @@ export function App() {
           </div>
         )}
 
-        {/* Input Prompt Card */}
-        <TripInput onSubmit={handleCreatePlan} isLoading={isLoading} />
+        {/* Input Prompt Card with Architecture Mode Selector */}
+        <TripInput
+          onSubmit={handleCreatePlan}
+          isLoading={isLoading}
+          useJev={useJev}
+          setUseJev={setUseJev}
+        />
 
         {/* Guardrail Rejection Notice (if blocked by TypeSafe Jev) */}
         {isGuardrailBlocked && (
@@ -144,13 +154,25 @@ export function App() {
           </div>
         )}
 
+        {/* Live Architecture Benchmark Comparison Card */}
+        {currentPlan && (
+          <BenchmarkComparisonCard
+            plan={currentPlan}
+            onSwitchModeAndRerun={(newMode) => {
+              setUseJev(newMode);
+              handleCreatePlan(currentPlan.user_query || "", currentPlan.trip_constraints?.origin || "DAC", newMode);
+            }}
+            isLoading={isLoading}
+          />
+        )}
+
         {/* Step-by-Step Multi-Agent Pipeline Timeline */}
         {(currentPlan || isLoading) && (
           <AgentProgressTimeline plan={currentPlan} isLoading={isLoading} />
         )}
 
-        {/* TypeSafe Jev Calibrated Intelligence Card */}
-        {currentPlan && !isGuardrailBlocked && (
+        {/* TypeSafe Jev Calibrated Intelligence Card (shown when Jev was utilized) */}
+        {currentPlan && !isGuardrailBlocked && currentPlan.use_jev !== false && (
           <JevDecisionCard plan={currentPlan} />
         )}
 
