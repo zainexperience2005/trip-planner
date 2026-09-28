@@ -73,6 +73,19 @@ def get_database_url() -> Optional[str]:
     return database_url
 
 
+def format_duration(ms: float) -> str:
+    """Formats milliseconds into clean minutes & seconds or seconds/ms."""
+    if ms is None or ms < 0:
+        return "0ms"
+    if ms < 1000:
+        return f"{round(ms)}ms"
+    if ms < 60000:
+        return f"{ms / 1000:.2f}s"
+    mins = int(ms // 60000)
+    secs = round((ms % 60000) / 1000, 1)
+    return f"{mins}m {secs}s"
+
+
 # Model Initializations
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
@@ -188,9 +201,10 @@ def hybrid_supervisor_agent(state: TravelState) -> Dict[str, Any]:
     times["supervisor_agent_ms"] = round((time.perf_counter() - t_start) * 1000, 1)
 
     # Print clear, structured Jev terminal output & latency log
+    time_display = format_duration(jev_latency_ms)
     print("\n" + "=" * 65)
     print(f"⚡ [TypeSafe Jev System 1 Decision Model] (Hybrid Pipeline)")
-    print(f"⏱ Execution Latency: {jev_latency_ms}ms (0 Tokens Used)")
+    print(f"⏱ Execution Latency: {time_display} ({jev_latency_ms}ms) · 0 Tokens Used")
     print(f"📥 Input Query: '{query}'")
     print(f"📊 Jev Probability & Decision Outputs:")
     print(f"   • is_travel (Noul):           {is_travel_prob:.3f} [{'PASSED' if is_travel_prob >= 0.35 else 'BLOCKED'}]")
@@ -393,7 +407,8 @@ def hybrid_budget_agent(state: TravelState) -> Dict[str, Any]:
                 f"- **Peak Price Risk:** {risk_val * 100:.1f}%\n\n"
             )
             print("-" * 55)
-            print(f"⚡ [TypeSafe Jev Budget Evaluation] Finished in {times['budget_jev_ms']}ms")
+            b_dur = format_duration(times['budget_jev_ms'])
+            print(f"⚡ [TypeSafe Jev Budget Evaluation] Finished in {b_dur} ({times['budget_jev_ms']}ms)")
             print(f"   • feasibility (Score):  {score_val:.2f} / 2.00")
             print(f"   • pricing_tier (Choice): '{tier_val}'")
             print(f"   • peak_risk (Noul):     {risk_val:.3f} ({risk_val * 100:.1f}%)")

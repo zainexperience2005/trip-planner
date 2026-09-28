@@ -70,3 +70,21 @@ export interface AgentStep {
   details?: string;
   metadata?: Record<string, any>;
 }
+
+/**
+ * Formats milliseconds into human-readable minutes and seconds format.
+ * - Under 1s: "420ms"
+ * - 1s to 59.9s: "14.2s"
+ * - 60s+: "2m 5s"
+ */
+export function formatDuration(ms?: number): string {
+  if (ms === undefined || ms === null || isNaN(ms) || ms <= 0) return "";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60000) {
+    return `${(ms / 1000).toFixed(1)}s`;
+  }
+  const mins = Math.floor(ms / 60000);
+  const remainingSecs = Math.round((ms % 60000) / 1000);
+  return `${mins}m ${remainingSecs}s`;
+}
+

@@ -1,6 +1,6 @@
 import type { FC } from "react";
 import { Zap, ShieldCheck, TrendingUp, Compass, Layers, BarChart3 } from "lucide-react";
-import type { TripPlanResponse } from "../types";
+import { type TripPlanResponse, formatDuration } from "../types";
 
 interface JevDecisionCardProps {
   plan: TripPlanResponse | null;
@@ -15,8 +15,8 @@ export const JevDecisionCard: FC<JevDecisionCardProps> = ({ plan }) => {
   const guardrailAllowed = plan.guardrail_allowed !== false;
   const selectedAgents = plan.selected_agents || [];
   const times = plan.execution_times || {};
-  const jevSupervisorTime = times.supervisor_jev_ms ? `${Math.round(times.supervisor_jev_ms)}ms` : "~180ms";
-  const jevBudgetTime = times.budget_jev_ms ? `${Math.round(times.budget_jev_ms)}ms` : null;
+  const jevSupervisorTime = times.supervisor_jev_ms ? formatDuration(times.supervisor_jev_ms) : "~180ms";
+  const jevBudgetTime = times.budget_jev_ms ? formatDuration(times.budget_jev_ms) : null;
 
   return (
     <div className="w-full glass-panel rounded-2xl p-5 sm:p-6 border border-purple-800/40 bg-gradient-to-b from-purple-950/20 via-slate-900/40 to-slate-950/60 shadow-xl relative overflow-hidden">

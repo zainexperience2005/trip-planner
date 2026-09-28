@@ -56,9 +56,22 @@ app.add_middleware(
 )
 
 
+def format_duration(ms: float) -> str:
+    """Formats milliseconds into clean minutes & seconds or seconds/ms."""
+    if ms is None or ms < 0:
+        return "0ms"
+    if ms < 1000:
+        return f"{round(ms)}ms"
+    if ms < 60000:
+        return f"{ms / 1000:.2f}s"
+    mins = int(ms // 60000)
+    secs = round((ms % 60000) / 1000, 1)
+    return f"{mins}m {secs}s"
+
+
 @app.middleware("http")
 async def log_request_time(request: Request, call_next):
-    """Measures and logs total HTTP request duration in milliseconds for all API endpoints."""
+    """Measures and logs total HTTP request duration in mins, secs & ms for all API endpoints."""
     start_time = time.perf_counter()
     response = await call_next(request)
     duration_ms = round((time.perf_counter() - start_time) * 1000, 1)
@@ -66,7 +79,8 @@ async def log_request_time(request: Request, call_next):
     if path.startswith("/api/"):
         status_code = response.status_code
         status_icon = "🟢" if status_code < 400 else "🔴"
-        print(f"[API LOG] {status_icon} {request.method} {path} | Total API Call Time: {duration_ms}ms | Status: {status_code}")
+        time_display = format_duration(duration_ms)
+        print(f"[API LOG] {status_icon} {request.method} {path} | Total API Time: {time_display} ({duration_ms}ms) | Status: {status_code}")
     return response
 
 
@@ -318,7 +332,7 @@ def create_trip_plan(request: TripPlanRequest, db: Session = Depends(get_db)):
         )
 
         total_time_ms = result.get("execution_times", {}).get("total_pipeline_ms", 0)
-        print(f"[API] ✅ Plan created successfully for mode='{chosen_mode}' in {total_time_ms}ms (Thread: {result.get('thread_id')})")
+        print(f"[API] ✅ Plan created successfully for mode='{chosen_mode}' in {format_duration(total_time_ms)} ({total_time_ms}ms) (Thread: {result.get('thread_id')})")
 
         record = _save_or_update_trip_plan(db, result, request.user_query)
 

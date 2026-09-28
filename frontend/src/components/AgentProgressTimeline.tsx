@@ -13,7 +13,7 @@ import {
   Ban,
   ArrowRight,
 } from "lucide-react";
-import type { TripPlanResponse } from "../types";
+import { type TripPlanResponse, formatDuration } from "../types";
 
 interface AgentProgressTimelineProps {
   plan: TripPlanResponse | null;
@@ -112,9 +112,7 @@ function getStepsForMode(mode: string = "hybrid"): StepItem[] {
 }
 
 function formatLatency(ms?: number): string {
-  if (!ms) return "";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  return `${(ms / 1000).toFixed(2)}s`;
+  return formatDuration(ms);
 }
 
 export const AgentProgressTimeline: FC<AgentProgressTimelineProps> = ({

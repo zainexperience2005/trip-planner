@@ -1,6 +1,6 @@
 import type { FC } from "react";
 import { Zap, Cpu, Gauge, Sparkles } from "lucide-react";
-import type { TripPlanResponse, ExecutionMode } from "../types";
+import { type TripPlanResponse, type ExecutionMode, formatDuration } from "../types";
 
 interface BenchmarkComparisonCardProps {
   plan: TripPlanResponse;
@@ -109,13 +109,13 @@ export const BenchmarkComparisonCard: FC<BenchmarkComparisonCardProps> = ({
                 <p className="text-[10px] text-purple-300/80 font-mono">Jev Speed + Deep LLM Synthesis</p>
               </div>
             </div>
-            <span className="text-xs font-bold text-emerald-400 font-mono">{Math.round(jevTimeMs)}ms</span>
+            <span className="text-xs font-bold text-emerald-400 font-mono">{formatDuration(jevTimeMs)}</span>
           </div>
 
           <div className="space-y-1.5 text-[11px] text-slate-300">
             <div className="flex justify-between py-1 border-b border-slate-800/60">
               <span className="text-slate-400">Router Latency</span>
-              <strong className="text-emerald-400 font-mono">~{Math.round(jevTimeMs)} ms</strong>
+              <strong className="text-emerald-400 font-mono">{formatDuration(jevTimeMs)} ({Math.round(jevTimeMs)}ms)</strong>
             </div>
             <div className="flex justify-between py-1 border-b border-slate-800/60">
               <span className="text-slate-400">Router Tokens</span>
@@ -155,7 +155,7 @@ export const BenchmarkComparisonCard: FC<BenchmarkComparisonCardProps> = ({
                 <p className="text-[10px] text-indigo-300/80 font-mono">Pure System 1 Decision Model</p>
               </div>
             </div>
-            <span className="text-xs font-bold text-emerald-400 font-mono">{Math.round(jevTimeMs)}ms</span>
+            <span className="text-xs font-bold text-emerald-400 font-mono">{formatDuration(jevTimeMs)}</span>
           </div>
 
           <div className="space-y-1.5 text-[11px] text-slate-300">
@@ -201,13 +201,13 @@ export const BenchmarkComparisonCard: FC<BenchmarkComparisonCardProps> = ({
                 <p className="text-[10px] text-slate-400 font-mono">Prompt & Parse JSON Loops</p>
               </div>
             </div>
-            <span className="text-xs font-bold text-amber-400 font-mono">{Math.round(llmRouterTimeMs)}ms</span>
+            <span className="text-xs font-bold text-amber-400 font-mono">{formatDuration(llmRouterTimeMs)}</span>
           </div>
 
           <div className="space-y-1.5 text-[11px] text-slate-300">
             <div className="flex justify-between py-1 border-b border-slate-800/60">
               <span className="text-slate-400">Router Latency</span>
-              <strong className="text-amber-400 font-mono">~{Math.round(llmRouterTimeMs)} ms</strong>
+              <strong className="text-amber-400 font-mono">{formatDuration(llmRouterTimeMs)} ({Math.round(llmRouterTimeMs)}ms)</strong>
             </div>
             <div className="flex justify-between py-1 border-b border-slate-800/60">
               <span className="text-slate-400">Router Tokens</span>
@@ -241,7 +241,7 @@ export const BenchmarkComparisonCard: FC<BenchmarkComparisonCardProps> = ({
         <div className="space-y-1">
           <div className="flex justify-between text-[11px] text-slate-400">
             <span>⚡ TypeSafe Jev Router</span>
-            <span className="font-mono text-emerald-400 font-bold">{Math.round(jevTimeMs)} ms (0 tokens)</span>
+            <span className="font-mono text-emerald-400 font-bold">{formatDuration(jevTimeMs)} ({Math.round(jevTimeMs)}ms) · 0 tokens</span>
           </div>
           <div className="h-2 w-full bg-slate-900 rounded-full overflow-hidden">
             <div
@@ -255,7 +255,7 @@ export const BenchmarkComparisonCard: FC<BenchmarkComparisonCardProps> = ({
         <div className="space-y-1 pt-1">
           <div className="flex justify-between text-[11px] text-slate-400">
             <span>🤖 Pure LLM Prompt-and-Parse Router</span>
-            <span className="font-mono text-amber-400 font-bold">{Math.round(llmRouterTimeMs)} ms (~750 tokens)</span>
+            <span className="font-mono text-amber-400 font-bold">{formatDuration(llmRouterTimeMs)} ({Math.round(llmRouterTimeMs)}ms) · ~750 tokens</span>
           </div>
           <div className="h-2 w-full bg-slate-900 rounded-full overflow-hidden">
             <div

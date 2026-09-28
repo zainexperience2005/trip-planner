@@ -48,6 +48,19 @@ GROQ_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
 llm = ChatGroq(model=GROQ_MODEL, api_key=GROQ_API_KEY, temperature=0.3, max_tokens=750)
 
 
+def format_duration(ms: float) -> str:
+    """Formats milliseconds into clean minutes & seconds or seconds/ms."""
+    if ms is None or ms < 0:
+        return "0ms"
+    if ms < 1000:
+        return f"{round(ms)}ms"
+    if ms < 60000:
+        return f"{ms / 1000:.2f}s"
+    mins = int(ms // 60000)
+    secs = round((ms % 60000) / 1000, 1)
+    return f"{mins}m {secs}s"
+
+
 class LLMTravelState(TypedDict, total=False):
     messages: Annotated[list[AnyMessage], operator.add]
     user_query: str
@@ -149,6 +162,22 @@ User Query: "{query}"
         times["supervisor_llm_router_ms"] = llm_latency_ms
 
     times["supervisor_agent_ms"] = round((time.perf_counter() - t_start) * 1000, 1)
+
+    # Print clear, structured Pure LLM router terminal log
+    time_display = format_duration(llm_latency_ms)
+    print("\n" + "=" * 65)
+    print(f"🤖 [Pure LLM Router (Prompt & Parse)] (Pure LLM Pipeline)")
+    print(f"⏱ Execution Latency: {time_display} ({llm_latency_ms}ms) · ~750 Tokens Used")
+    print(f"📥 Input Query: '{query}'")
+    print(f"📊 LLM Router JSON Decision Outputs:")
+    print(f"   • is_travel:                  {is_travel} [{'PASSED' if is_travel else 'BLOCKED'}]")
+    print(f"   • needs_flights:              {needs_flights} [{'Active' if needs_flights else 'Skipped'}]")
+    print(f"   • needs_hotels:               {needs_hotels} [{'Active' if needs_hotels else 'Skipped'}]")
+    print(f"   • needs_weather:              {needs_weather} [{'Active' if needs_weather else 'Skipped'}]")
+    print(f"   • needs_budget:               {needs_budget} [{'Active' if needs_budget else 'Skipped'}]")
+    print(f"   • trip_style:                 '{trip_style}'")
+    print(f"   • destination_clarity:        {dest_score:.2f} / 2.0")
+    print("=" * 65 + "\n")
 
     comparison = {
         "active_mode": "pure_llm",
