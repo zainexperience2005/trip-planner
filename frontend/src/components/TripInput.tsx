@@ -1,11 +1,12 @@
 import { useState, type FC, type FormEvent, type KeyboardEvent } from "react";
 import { Send, Sparkles, Plane, Compass, AlertCircle } from "lucide-react";
+import type { ExecutionMode } from "../types";
 
 interface TripInputProps {
-  onSubmit: (query: string, origin: string, useJev: boolean) => void;
+  onSubmit: (query: string, origin: string, mode: ExecutionMode) => void;
   isLoading: boolean;
-  useJev: boolean;
-  setUseJev: (val: boolean) => void;
+  mode: ExecutionMode;
+  setMode: (val: ExecutionMode) => void;
 }
 
 interface InspirationIdea {
@@ -112,7 +113,7 @@ const PRESET_PROMPTS: InspirationIdea[] = [
   },
 ];
 
-export const TripInput: FC<TripInputProps> = ({ onSubmit, isLoading, useJev, setUseJev }) => {
+export const TripInput: FC<TripInputProps> = ({ onSubmit, isLoading, mode, setMode }) => {
   const [query, setQuery] = useState("");
   const [origin, setOrigin] = useState("DAC");
   const [error, setError] = useState("");
@@ -131,7 +132,7 @@ export const TripInput: FC<TripInputProps> = ({ onSubmit, isLoading, useJev, set
       return;
     }
     setError("");
-    onSubmit(query.trim(), origin.trim() || "DAC", useJev);
+    onSubmit(query.trim(), origin.trim() || "DAC", mode);
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -156,7 +157,7 @@ export const TripInput: FC<TripInputProps> = ({ onSubmit, isLoading, useJev, set
       <div className="absolute bottom-0 left-0 w-72 h-72 bg-indigo-600/10 rounded-full blur-3xl pointer-events-none" />
 
       <form onSubmit={handleSubmit} className="relative z-10 space-y-4">
-        {/* Header Controls: Label, Architecture Mode Selector, Airport Origin */}
+        {/* Header Controls: Label, Architecture Mode Selector (3 options), Airport Origin */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           <label htmlFor="travel-query" className="text-sm font-semibold text-slate-200 flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-indigo-400" />
@@ -164,31 +165,43 @@ export const TripInput: FC<TripInputProps> = ({ onSubmit, isLoading, useJev, set
           </label>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* Architecture Mode Selector Toggle */}
+            {/* 3 Architecture Mode Selector Options */}
             <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
               <button
                 type="button"
-                onClick={() => setUseJev(true)}
+                onClick={() => setMode("hybrid")}
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-semibold transition-all ${
-                  useJev
+                  mode === "hybrid"
                     ? "bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md shadow-purple-600/20"
                     : "text-slate-400 hover:text-slate-200"
                 }`}
-                title="Use TypeSafe Jev System 1 for ~180ms routing & 0 token guardrail"
+                title="Hybrid: Jev System 1 Routing (~180ms) + Groq LLM Generative Synthesis + MCP Live Tools"
               >
-                <span>⚡ TypeSafe Jev (Fast)</span>
+                <span>🚀 Hybrid</span>
               </button>
               <button
                 type="button"
-                onClick={() => setUseJev(false)}
+                onClick={() => setMode("jev")}
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-semibold transition-all ${
-                  !useJev
+                  mode === "jev"
+                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20 border border-indigo-500/40"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+                title="Pure Jev: TypeSafe Jev System 1 Decision Model for all guardrails and budget rubrics"
+              >
+                <span>⚡ TypeSafe Jev</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("pure_llm")}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-semibold transition-all ${
+                  mode === "pure_llm"
                     ? "bg-slate-800 text-indigo-300 shadow-md border border-slate-700"
                     : "text-slate-400 hover:text-slate-200"
                 }`}
-                title="Use traditional Groq Prompt & Parse JSON Router for comparison"
+                title="Pure LLM: Traditional Groq Prompt & Parse JSON Router for comparison"
               >
-                <span>🤖 Pure LLM Mode</span>
+                <span>🤖 Pure LLM</span>
               </button>
             </div>
 

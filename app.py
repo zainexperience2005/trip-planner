@@ -70,9 +70,14 @@ class TripPlanRequest(BaseModel):
         description="Optional unique session/thread identifier for state persistence.",
         example="trip_tokyo_001"
     )
+    mode: Optional[str] = Field(
+        "hybrid",
+        description="Execution mode: 'jev' (Pure Jev System 1), 'pure_llm' (Pure LLM), or 'hybrid' (Hybrid System 1 & 2).",
+        example="hybrid"
+    )
     use_jev: Optional[bool] = Field(
-        True,
-        description="Enable TypeSafe Jev System 1 for routing and guardrails (True) or pure LLM mode (False).",
+        None,
+        description="Backward-compatible boolean toggle for TypeSafe Jev (True = hybrid/jev, False = pure_llm).",
         example=True
     )
 
@@ -91,6 +96,10 @@ class ResumeTripPlanRequest(BaseModel):
         "",
         description="Feedback or revision instructions if approved is False.",
         example="Please add more budget-friendly food stalls in Shibuya."
+    )
+    mode: Optional[str] = Field(
+        "hybrid",
+        description="Pipeline mode to resume: 'hybrid' | 'jev' | 'pure_llm'."
     )
 
 
@@ -115,6 +124,7 @@ class TripPlanResponse(BaseModel):
     raw_data: Optional[Dict[str, Any]] = None
     execution_times: Optional[Dict[str, Any]] = None
     comparison_metrics: Optional[Dict[str, Any]] = None
+    mode: Optional[str] = "hybrid"
     use_jev: Optional[bool] = True
     llm_calls: int = 0
     created_at: Optional[datetime] = None
@@ -194,6 +204,7 @@ def _save_or_update_trip_plan(db: Session, result: Dict[str, Any], user_query: s
     raw_data = result.get("raw_data") or result
     execution_times = result.get("execution_times") or {}
     comparison_metrics = result.get("comparison_metrics") or {}
+    mode = result.get("mode") or "hybrid"
     use_jev = result.get("use_jev", True)
     llm_calls = result.get("llm_calls", 0)
 
@@ -218,6 +229,7 @@ def _save_or_update_trip_plan(db: Session, result: Dict[str, Any], user_query: s
         existing_plan.raw_data = raw_data
         existing_plan.execution_times = execution_times
         existing_plan.comparison_metrics = comparison_metrics
+        existing_plan.mode = mode
         existing_plan.use_jev = use_jev
         existing_plan.llm_calls = llm_calls
         existing_plan.created_at = datetime.utcnow()
@@ -246,6 +258,7 @@ def _save_or_update_trip_plan(db: Session, result: Dict[str, Any], user_query: s
             raw_data=raw_data,
             execution_times=execution_times,
             comparison_metrics=comparison_metrics,
+            mode=mode,
             use_jev=use_jev,
             llm_calls=llm_calls,
             created_at=datetime.utcnow()
@@ -265,17 +278,24 @@ def _save_or_update_trip_plan(db: Session, result: Dict[str, Any], user_query: s
 def create_trip_plan(request: TripPlanRequest, db: Session = Depends(get_db)):
     """
     Execute the multi-agent travel planning graph and return all specialist findings.
+    Supports mode: 'jev' (Pure Jev), 'pure_llm' (Pure LLM), or 'hybrid' (Hybrid System 1 & 2).
     """
     if not request.user_query.strip():
         raise HTTPException(status_code=400, detail="user_query cannot be empty.")
 
     try:
-        # Run LangGraph multi-agent pipeline with selected mode (Jev vs Pure LLM)
-        use_jev_flag = True if request.use_jev is None else bool(request.use_jev)
+        # Determine mode
+        chosen_mode = request.mode or "hybrid"
+        if request.use_jev is False:
+            chosen_mode = "pure_llm"
+        elif request.use_jev is True and chosen_mode not in ["jev", "pure_llm", "hybrid"]:
+            chosen_mode = "hybrid"
+
         result = run_travel_agent(
             user_input=request.user_query,
             thread_id=request.thread_id,
-            use_jev=use_jev_flag
+            mode=chosen_mode,
+            use_jev=request.use_jev
         )
 
         record = _save_or_update_trip_plan(db, result, request.user_query)
@@ -301,6 +321,7 @@ def create_trip_plan(request: TripPlanRequest, db: Session = Depends(get_db)):
             raw_data=record.raw_data,
             execution_times=record.execution_times,
             comparison_metrics=record.comparison_metrics,
+            mode=record.mode or chosen_mode,
             use_jev=record.use_jev,
             llm_calls=record.llm_calls,
             created_at=record.created_at

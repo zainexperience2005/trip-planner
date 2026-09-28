@@ -1,4 +1,4 @@
-import type { TripPlanResponse, PlanHistoryItem } from "./types";
+import type { TripPlanResponse, PlanHistoryItem, ExecutionMode } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
@@ -37,14 +37,20 @@ export async function checkBackendHealth(): Promise<{ status: string; database?:
   }
 }
 
-export async function createTripPlan(query: string, origin?: string, threadId?: string, useJev: boolean = true): Promise<TripPlanResponse> {
+export async function createTripPlan(
+  query: string,
+  origin?: string,
+  threadId?: string,
+  mode: ExecutionMode = "hybrid"
+): Promise<TripPlanResponse> {
   const fullQuery = origin && origin.trim() && origin.trim().toUpperCase() !== "DAC"
     ? `${query} (Origin airport: ${origin.trim().toUpperCase()})`
     : query;
 
   const payload: Record<string, any> = {
     user_query: fullQuery,
-    use_jev: useJev,
+    mode: mode,
+    use_jev: mode in ["jev", "hybrid"],
   };
   if (threadId) payload.thread_id = threadId;
 

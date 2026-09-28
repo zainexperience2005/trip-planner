@@ -8,14 +8,14 @@ import { HitlReviewCard } from "./components/HitlReviewCard";
 import { SpecialistResultsView } from "./components/SpecialistResultsView";
 import { ItineraryViewer } from "./components/ItineraryViewer";
 import { PlanHistorySidebar } from "./components/PlanHistorySidebar";
-import type { TripPlanResponse, PlanHistoryItem } from "./types";
+import type { TripPlanResponse, PlanHistoryItem, ExecutionMode } from "./types";
 import { checkBackendHealth, createTripPlan, resumeTripPlan, getPlanHistory, getPlanDetails } from "./api";
 import { AlertCircle, ShieldAlert } from "lucide-react";
 
 export function App() {
   const [backendHealth, setBackendHealth] = useState<{ status: string; database?: string; jev_ready?: boolean }>({ status: "checking" });
   const [currentPlan, setCurrentPlan] = useState<TripPlanResponse | null>(null);
-  const [useJev, setUseJev] = useState<boolean>(true);
+  const [mode, setMode] = useState<ExecutionMode>("hybrid");
   const [isLoading, setIsLoading] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,12 +41,15 @@ export function App() {
     setIsHistoryLoading(false);
   };
 
-  const handleCreatePlan = async (query: string, origin: string, withJev: boolean = useJev) => {
+  const handleCreatePlan = async (query: string, origin: string, chosenMode: ExecutionMode = mode) => {
     setIsLoading(true);
     setError(null);
     try {
-      const result = await createTripPlan(query, origin, undefined, withJev);
+      const result = await createTripPlan(query, origin, undefined, chosenMode);
       setCurrentPlan(result);
+      if (result.mode) {
+        setMode(result.mode);
+      }
       loadHistory();
     } catch (err: any) {
       setError(err.message || "Failed to create trip plan. Please ensure the backend is running.");
@@ -76,8 +79,10 @@ export function App() {
     try {
       const plan = await getPlanDetails(threadId);
       setCurrentPlan(plan);
-      if (typeof plan.use_jev === "boolean") {
-        setUseJev(plan.use_jev);
+      if (plan.mode) {
+        setMode(plan.mode);
+      } else if (typeof plan.use_jev === "boolean") {
+        setMode(plan.use_jev ? "hybrid" : "pure_llm");
       }
     } catch (err: any) {
       setError(err.message || "Failed to load selected plan.");
@@ -126,12 +131,12 @@ export function App() {
           </div>
         )}
 
-        {/* Input Prompt Card with Architecture Mode Selector */}
+        {/* Input Prompt Card with 3 Architecture Mode Selector Options */}
         <TripInput
           onSubmit={handleCreatePlan}
           isLoading={isLoading}
-          useJev={useJev}
-          setUseJev={setUseJev}
+          mode={mode}
+          setMode={setMode}
         />
 
         {/* Guardrail Rejection Notice (if blocked by TypeSafe Jev) */}
@@ -142,13 +147,13 @@ export function App() {
             </div>
             <div className="space-y-1">
               <h3 className="text-base font-bold text-rose-200">
-                Request Filtered by TypeSafe Jev Guardrail
+                Request Filtered by Travel Guardrail
               </h3>
               <p className="text-xs sm:text-sm text-rose-300/80 leading-relaxed">
                 {currentPlan.guardrail_reason || currentPlan.final_response || "TripMate AI can only assist with travel, flight, hotel, weather, destination, and itinerary planning queries."}
               </p>
               <p className="text-[11px] text-slate-400 mt-2 font-mono">
-                Jev Guardrail probability was below the minimum 0.35 threshold. LLM token expenditure was successfully avoided.
+                Guardrail probability was below the minimum threshold. LLM token expenditure was avoided.
               </p>
             </div>
           </div>
@@ -159,7 +164,7 @@ export function App() {
           <BenchmarkComparisonCard
             plan={currentPlan}
             onSwitchModeAndRerun={(newMode) => {
-              setUseJev(newMode);
+              setMode(newMode);
               handleCreatePlan(currentPlan.user_query || "", currentPlan.trip_constraints?.origin || "DAC", newMode);
             }}
             isLoading={isLoading}

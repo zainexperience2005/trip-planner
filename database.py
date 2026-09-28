@@ -60,6 +60,7 @@ class TripPlan(Base):
     raw_data = Column(JSON, nullable=True)
     execution_times = Column(JSON, nullable=True)
     comparison_metrics = Column(JSON, nullable=True)
+    mode = Column(String(50), default="hybrid", nullable=True)
     use_jev = Column(Boolean, default=True, nullable=True)
     llm_calls = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -106,6 +107,7 @@ def _ensure_columns(engine_instance):
                 "raw_data": "JSON",
                 "execution_times": "JSON",
                 "comparison_metrics": "JSON",
+                "mode": "VARCHAR(50) DEFAULT 'hybrid'",
                 "use_jev": "BOOLEAN DEFAULT 1",
             }
             with engine_instance.begin() as conn:

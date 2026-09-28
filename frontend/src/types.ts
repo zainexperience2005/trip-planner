@@ -8,6 +8,8 @@ export interface TripConstraints {
   special_preferences?: string[];
 }
 
+export type ExecutionMode = "jev" | "pure_llm" | "hybrid";
+
 export interface TripPlanResponse {
   thread_id: string;
   answer: string;
@@ -32,6 +34,7 @@ export interface TripPlanResponse {
   human_feedback?: string;
   execution_times?: Record<string, number>;
   comparison_metrics?: Record<string, any>;
+  mode?: ExecutionMode;
   use_jev?: boolean;
   llm_calls?: number;
   
